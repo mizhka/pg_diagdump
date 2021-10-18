@@ -150,6 +150,7 @@ file ${_bin}
 attach ${_master}
 p num_held_lwlocks
 p held_lwlocks
+eval "p *((LWLockHandle (*) [%u]) held_lwlocks)", num_held_lwlocks
 detach
 EOF
 
