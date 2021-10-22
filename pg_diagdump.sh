@@ -41,7 +41,7 @@ then
 fi
 
 unamestr=`uname`
-
+GZIP="gzip"
 
 
 # Normal way
@@ -198,7 +198,7 @@ EOF
         rm tmp$i.out
         #rm tmp$i.gdb
     done
-    pigz $OUTPUT.stacks_${_master}
+    ${GZIP} $OUTPUT.stacks_${_master}
     
     echo "Done!"
 }
@@ -222,7 +222,7 @@ pg_diagdump_perf ()
         perf record -F 99 -a -g --call-graph=dwarf sleep 2 >$OUTPUT.perf 2>&1 
         perf script --header --fields comm,pid,tid,time,event,ip,sym,dso >> $OUTPUT.perf
         rm perf.data
-        pigz $OUTPUT.perf
+        ${GZIP} $OUTPUT.perf
     fi
     echo "Done!"
 }
@@ -238,7 +238,7 @@ pg_diagdump_gcore_running ()
         printf "${_pid})... "
         echo 21 > /proc/${_pid}/coredump_filter
         gcore -o ${OUTPUT}_gcore ${_pid} 
-        pigz ${OUTPUT}_gcore.${_pid}
+        ${GZIP} ${OUTPUT}_gcore.${_pid}
         echo "Done!"
     done
 }
@@ -255,7 +255,7 @@ pg_diagdump_linux_kerncore_running ()
         echo 63 > /proc/${_pid}/coredump_filter
         printf "${_pid})... "
         
-        sysctl -qw kernel.core_pattern="|/bin/sh -c \$@ -- eval exec pigz --fast > $DESTDIR/$OUTPUT.coredump_%p.gz"
+        sysctl -qw kernel.core_pattern="|/bin/sh -c \$@ -- eval exec ${GZIP} --fast > $DESTDIR/$OUTPUT.coredump_%p.gz"
         /bin/kill -s ABRT ${_pid}
         sleep 1
         sysctl -qw kernel.core_pattern="${_oldpattern}"
@@ -307,7 +307,7 @@ COPY ( select * from pg_replication_slots
 ) TO '/tmp/$OUTPUT.pg_stat_replication_slots_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 EOF
            mv /tmp/$OUTPUT.pg_stat_*.csv ./
-           pigz $OUTPUT.pg_stat_*
+           ${GZIP} $OUTPUT.pg_stat_*
            chown $(whoami) $OUTPUT.pg_stat_*
            echo "Done!"
         fi
@@ -430,7 +430,17 @@ check_installed_pkgs ()
     _missing=()
     if ! (type pigz) >/dev/null 2>&1;
     then
-        _missing+=('pigz')
+        if ! (type gzip) >/dev/null 2>&1;
+        then
+            # if missing install better tool
+            _missing+=('pigz')
+        else
+            echo ""
+            echo "WARNING! pigz isn't installed, so I use gzip instead."
+            echo ""
+        fi
+    else
+        GZIP='pigz'
     fi
 
     if ! (type gdb) >/dev/null 2>&1;
