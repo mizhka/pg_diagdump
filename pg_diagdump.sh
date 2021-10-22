@@ -18,7 +18,7 @@
 # 
 # v0.5 - add sqlstats into state command
 # v0.6 - add pg_stat_activity and held LW locks
-# v0.7 - Add AltLinux support & full backtrace and 
+# v0.7 - Add AltLinux support & full backtrace and
 
 # Let's root it
 if [ $(id -u) != "0" ];
@@ -75,7 +75,7 @@ get_postmaster_by_port () {
 	elif [ "$distname" = "altlinux" ]; then
 	        ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*,\([0-9]\{1,\}\),.*#\1#" 
 	else
-		ss -4Htanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
+		ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
 	fi
 }
 
@@ -220,7 +220,7 @@ pg_diagdump_perf ()
     then
         rm -f perf.data
         perf record -F 99 -a -g --call-graph=dwarf sleep 2 >$OUTPUT.perf 2>&1 
-        perf script --header -f comm,pid,tid,time,event,ip,sym,dso >> $OUTPUT.perf
+        perf script --header --fields comm,pid,tid,time,event,ip,sym,dso >> $OUTPUT.perf
         rm perf.data
         pigz $OUTPUT.perf
     fi
