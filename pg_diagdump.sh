@@ -18,7 +18,7 @@
 # 
 # v0.5 - add sqlstats into state command
 # v0.6 - add pg_stat_activity and held LW locks
-# v0.7 - Add AltLinux support & full backtrace and
+# v0.7 - Add AltLinux support & full backtrace
 # v0.8 - All files in one archive
 
 # Let's root it
