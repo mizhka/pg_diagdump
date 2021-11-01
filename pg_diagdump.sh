@@ -19,6 +19,7 @@
 # v0.5 - add sqlstats into state command
 # v0.6 - add pg_stat_activity and held LW locks
 # v0.7 - Add AltLinux support & full backtrace and
+# v0.8 - All files in one archive
 
 # Let's root it
 if [ $(id -u) != "0" ];
@@ -62,12 +63,27 @@ else
 	PKGMG="yum install"
 fi
 OUTPUT=diag_`date '+%Y%m%d_%H%M%S'`
+OUTTAR="${OUTPUT}".tar
+OUTTGZ="${OUTPUT}".tar.gz
 DESTDIR=`pwd`
 MARKER="autovacuum\ launcher"
+
+TERM_USER=`logname`
 
 _masters=()
 _listenport=1
 _pgdata=""
+
+add_file_to_output() {
+  chown ${TERM_USER}:${TERM_USER} ${@}
+  tar -uf ${OUTTAR} ${@}
+  rm -f ${@}
+}
+
+gzip_outtar() {
+  gzip ${OUTTAR}
+  chown ${TERM_USER}:${TERM_USER} ${OUTTGZ}
+}
 
 get_postmaster_by_port () {
 	if [ "$unamestr" = "FreeBSD" ]; then
@@ -155,7 +171,7 @@ detach
 EOF
 
     out_check=$(gdb -batch -q  -n --command=tmp_check.gdb 2>&1 >/dev/null < /dev/null | grep Error)
-    
+    rm tmp_check.gdb
     if [ "$out_check" != "" ]; then
         prints=""
     else 
@@ -196,9 +212,9 @@ EOF
     do
         cat tmp$i.out >> $OUTPUT.stacks_${_master}
         rm tmp$i.out
-        #rm tmp$i.gdb
+        rm tmp$i.gdb
     done
-    ${GZIP} $OUTPUT.stacks_${_master}
+    add_file_to_output $OUTPUT.stacks_${_master}
     
     echo "Done!"
 }
@@ -222,7 +238,7 @@ pg_diagdump_perf ()
         perf record -F 99 -a -g --call-graph=dwarf sleep 2 >$OUTPUT.perf 2>&1 
         perf script --header --fields comm,pid,tid,time,event,ip,sym,dso >> $OUTPUT.perf
         rm perf.data
-        ${GZIP} $OUTPUT.perf
+        add_file_to_output $OUTPUT.perf
     fi
     echo "Done!"
 }
@@ -237,16 +253,17 @@ pg_diagdump_gcore_running ()
         _pid=$(ps --ppid ${_master} -o pid --sort=-%cpu | grep -v ${_master} | head -2 | tail -1 | awk '{$1=$1};1')
         printf "${_pid})... "
         echo 21 > /proc/${_pid}/coredump_filter
-        gcore -o ${OUTPUT}_gcore ${_pid} 
-        ${GZIP} ${OUTPUT}_gcore.${_pid}
+        gcore -o ${OUTPUT}_gcore ${_pid}
+        add_file_to_output ${OUTPUT}_gcore.${_pid}
         echo "Done!"
     done
 }
 
 pg_diagdump_linux_kerncore_running ()
 {
-    local _master _pid _oldpattern
-    
+    local _master _pid _oldpattern _cp
+
+    _cp=`which cp`
     _oldpattern=`sysctl -n kernel.core_pattern`
     for _master in ${_masters}
     do
@@ -254,11 +271,12 @@ pg_diagdump_linux_kerncore_running ()
         _pid=$(ps --ppid ${_master} -o pid --sort=-%cpu | grep -v ${_master} | head -2 | tail -1 | awk '{$1=$1};1')
         echo 63 > /proc/${_pid}/coredump_filter
         printf "${_pid})... "
-        
-        sysctl -qw kernel.core_pattern="|/bin/sh -c \$@ -- eval exec ${GZIP} --fast > $DESTDIR/$OUTPUT.coredump_%p.gz"
+
+        sysctl -qw kernel.core_pattern="|${_cp} /dev/stdin ${DESTDIR}/${OUTPUT}.coredump_%p"
         /bin/kill -s ABRT ${_pid}
         sleep 1
         sysctl -qw kernel.core_pattern="${_oldpattern}"
+        add_file_to_output $OUTPUT.coredump_*
         echo "Done!"
     done
 }
@@ -307,8 +325,7 @@ COPY ( select * from pg_replication_slots
 ) TO '/tmp/$OUTPUT.pg_stat_replication_slots_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 EOF
            mv /tmp/$OUTPUT.pg_stat_*.csv ./
-           ${GZIP} $OUTPUT.pg_stat_*
-           chown $(whoami) $OUTPUT.pg_stat_*
+           add_file_to_output $OUTPUT.pg_stat_*
            echo "Done!"
         fi
     done
@@ -317,9 +334,9 @@ EOF
 
 pg_diagdump_summary ()
 {
+    gzip_outtar
     echo ""
-    echo "Generated files:"
-    find "${PWD}" -name ${OUTPUT}\* -exec echo "  "{} \;
+    echo "Generated file: ${OUTTAR}.gz"
 }
 
 show_help () {
