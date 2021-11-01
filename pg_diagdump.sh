@@ -74,6 +74,20 @@ _masters=()
 _listenport=1
 _pgdata=""
 
+function prevent_oom_pid {
+  # -17 is magic, disable oom_killer for pid
+  echo -17 > /proc/${1}/oom_adj
+}
+
+function protect_from_oom_killer {
+  # protect ssh
+  pgrep -f "sshd" | while read PID; do prevent_oom_pid ${PID}; done
+  # protect parent process
+  prevent_oom_pid $PPID
+  # protect current process
+  prevent_oom_pid $$
+}
+
 add_file_to_output() {
   chown ${TERM_USER}:${TERM_USER} ${@}
   tar -uf ${OUTTAR} ${@}
@@ -531,6 +545,7 @@ then
 fi
 
 check_installed_pkgs
+protect_from_oom_killer
 validate_cluster_params
 {
     case "$_cmd" in
