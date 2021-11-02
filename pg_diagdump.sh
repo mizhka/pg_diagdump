@@ -68,11 +68,36 @@ OUTTGZ="${OUTPUT}".tar.gz
 DESTDIR=`pwd`
 MARKER="autovacuum\ launcher"
 
-TERM_USER=`logname`
+TERM_USER="${USER}"
 
 _masters=()
 _listenport=1
 _pgdata=""
+
+# search for non privileged user
+function set_term_user {
+    local _user _user_detect_cmds _cmd
+
+    _user_detect_cmds=("id -un" "whoami" "logname" "echo $SUDO_USER" "echo $USER" "echo $DOAS_USER")
+
+    # search for not empty, not root
+    for _cmd in "${_user_detect_cmds[@]}"; do
+      _user=$($_cmd)
+      if [ "${_user}" != "root" ] && [ "${_user}" != "" ]; then
+        TERM_USER="${_user}"
+        return
+      fi
+    done
+
+    # not root is not found, so root is acceptable
+    for _cmd in "${_user_detect_cmds[@]}"; do
+      _user=$($_cmd)
+      if [ "${_user}" != "" ]; then
+        TERM_USER="${_user}"
+        return
+      fi
+    done
+}
 
 function prevent_oom_pid {
   # -17 is magic, disable oom_killer for pid
@@ -544,6 +569,7 @@ then
     exit 1
 fi
 
+set_term_user
 check_installed_pkgs
 protect_from_oom_killer
 validate_cluster_params
