@@ -20,16 +20,17 @@
 # v0.6 - add pg_stat_activity and held LW locks
 # v0.7 - Add AltLinux support & full backtrace
 # v0.8 - All files in one archive
+# v0.9 - add snap & stacks, use different suffixes for each run
 
-# Let's root it
-if [ $(id -u) != "0" ];
+# Let's root it if not root and not postgres
+if [ $(id -u) != "0" -a $(id -un) != "postgres" ];
 then
     if !(type sudo) >/dev/null 2>&1;
     then
         echo ""
         echo "ERROR!"
-        echo "       Please execute program under root account"
-        echo "       Usage of program under non-root account is not yet supported"
+        echo "       Please execute program under postgres or root account"
+        echo "       Usage of program under other account without sudo is not supported"
         echo ""
         exit 1
     fi
@@ -44,6 +45,7 @@ fi
 unamestr=`uname`
 GZIP="gzip"
 
+WITHOUT_PERF="yes"
 
 # Normal way
 if [ "$unamestr" = "FreeBSD" ]; then
@@ -62,7 +64,7 @@ else
         PARALLEL=`nproc`
 	PKGMG="yum install"
 fi
-OUTPUT=diag_`date '+%Y%m%d_%H%M%S'`
+OUTPUT=diag_`date '+%Y%m%d_%H%M%S'`_$RANDOM
 OUTTAR="${OUTPUT}".tar
 OUTTGZ="${OUTPUT}".tar.gz
 DESTDIR=`pwd`
@@ -105,12 +107,15 @@ function prevent_oom_pid {
 }
 
 function protect_from_oom_killer {
-  # protect ssh
-  pgrep -f "sshd" | while read PID; do prevent_oom_pid ${PID}; done
-  # protect parent process
-  prevent_oom_pid $PPID
-  # protect current process
-  prevent_oom_pid $$
+  if [ $(id -u) == "0" ];
+  then
+    # protect ssh
+    pgrep -f "sshd" | while read PID; do prevent_oom_pid ${PID}; done
+    # protect parent process
+    prevent_oom_pid $PPID
+    # protect current process
+    prevent_oom_pid $$
+  fi
 }
 
 add_file_to_output() {
@@ -125,12 +130,19 @@ gzip_outtar() {
 }
 
 get_postmaster_by_port () {
+
 	if [ "$unamestr" = "FreeBSD" ]; then
 		sockstat -4lq -p ${1} | cut -f3 -w
-	elif [ "$distname" = "altlinux" ]; then
+	elif (type netstat) >/dev/null 2>&1;
+    then
+        /bin/netstat -4tanlp 2>/dev/null | grep "${1}" | sed -e 's#.* \([0-9]\{1,\}\)\/.*#\1#g'
+	elif (type ss) >/dev/null 2>&1;
+    then
+        if [ "$distname" = "altlinux" ]; then
 	        ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*,\([0-9]\{1,\}\),.*#\1#" 
-	else
-		ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
+	    else
+		    ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
+	    fi
 	fi
 }
 
@@ -150,9 +162,9 @@ get_pgport_by_pid () {
 	    if (type netstat) >/dev/null 2>&1;
             then
                 if [ "$distname" = "altlinux" ]; then
-                    /bin/netstat -A inet -tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+                    /bin/netstat -A inet -tanlp 2>/dev/null  | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
                  else
-                    /bin/netstat -4tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+                    /bin/netstat -4tanlp 2>/dev/null  | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
                  fi
             elif (type ss) >/dev/null 2>&1;
             then
@@ -196,8 +208,9 @@ EOF
     done
     rm tmp.gdb
 
-    # check debuginfo
-    cat - > tmp_check.gdb <<EOF
+    # check debuginfo once
+    if [ ! -f '.gdb.check' ]; then
+        cat - > tmp_check.gdb <<EOF
 set width 0
 set height 0
 set verbose off
@@ -205,12 +218,18 @@ file ${_bin}
 attach ${_master}
 p num_held_lwlocks
 p held_lwlocks
+p MemoryContextStatsDetail(TopMemoryContext, 5000)
 eval "p *((LWLockHandle (*) [%u]) held_lwlocks)", num_held_lwlocks
 detach
 EOF
 
-    out_check=$(gdb -batch -q  -n --command=tmp_check.gdb 2>&1 >/dev/null < /dev/null | grep Error)
-    rm tmp_check.gdb
+        out_check=$(gdb -batch -q  -n --command=tmp_check.gdb 2>&1 >/dev/null < /dev/null | grep Error)
+        echo $out_check > .gdb.check
+        rm tmp_check.gdb
+    else 
+        out_check=$(cat .gdb.check)
+    fi
+    
     if [ "$out_check" != "" ]; then
         prints=""
     else 
@@ -320,25 +339,101 @@ pg_diagdump_linux_kerncore_running ()
     done
 }
 
-pg_diagdump_sqlstat ()
+pg_diagdump_sqlsnap () 
 {
-    local _master
+    local _master _port _su
+
+    # Identify way to execute PSQL
+    if [ $(id -u) == "0" ]; then
+        _su="su -l postgres -c"
+    else
+        _su="bash -c"
+    fi
 
     for _master in ${_masters}
     do
-        if $(timeout 1 su -l postgres -c "psql -p $(get_pgport_by_pid ${_master}) -c 'select 1;'" > /dev/null)
+        _port=$(get_pgport_by_pid ${_master})
+        if $(timeout 1 ${_su} "psql -p ${_port} -c 'select 1;'" > /dev/null)
         then
-           echo "PostgreSQL is alive!"
-           printf "Please wait 20 seconds to gather stats... "
-           su -l postgres -c "psql -p $(get_pgport_by_pid ${_master})" >/dev/null << EOF
+            echo "PostgreSQL is alive!"
+            printf "Please wait a bit to gather stats... "
+            ${_su} "psql -p ${_port} -c 'select 1 from pg_stat_statement limit 0'" 2>/dev/null 1>&2
+            if [ $? == 0 ]; then
+                _pgss=$"COPY ( select * from pg_stat_statements
+) TO '/tmp/$OUTPUT.pg_snap_statements.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+"
+            else 
+                _pgss=""
+                echo "WARNING! Please install pg_stat_statements"
+            fi
+             ${_su} "psql -p ${_port}" >/dev/null << EOF
+COPY ( select * from pg_stat_user_tables
+) TO '/tmp/$OUTPUT.pg_snap_user_tables.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+COPY ( select * from pg_stat_activity
+) TO '/tmp/$OUTPUT.pg_snap_activity.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);     
+COPY ( select * from pg_stat_user_indexes
+) TO '/tmp/$OUTPUT.pg_snap_user_indexes.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);           
+COPY ( select * from pg_prepared_xacts
+) TO '/tmp/$OUTPUT.pg_snap_prepared_xacts.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+COPY ( select * from pg_stat_replication
+) TO '/tmp/$OUTPUT.pg_snap_replication.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+COPY ( select * from pg_replication_slots
+) TO '/tmp/$OUTPUT.pg_snap_replication_slots.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+COPY ( select * from pg_locks
+) TO '/tmp/$OUTPUT.pg_snap_locks.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+${_pgss}
+EOF
+           mv /tmp/$OUTPUT.pg_snap_*.csv ./
+           add_file_to_output $OUTPUT.pg_snap_*
+           echo "Done!"
+        else
+            echo "WARNING! No live PostgreSQL found on listen port ${_port}" >&2
+        fi
+    done
+}
+
+pg_diagdump_sqlstat ()
+{
+    local _master _port _su
+
+    # Identify way to execute PSQL
+    if [ $(id -u) == "0" ]; then
+        _su="su -l postgres -c"
+    else
+        _su="bash -c"
+    fi
+    
+    for _master in ${_masters}
+    do
+        _port=$(get_pgport_by_pid ${_master})
+        if $(timeout 1 ${_su} "psql -p ${_port} -c 'select 1;'" > /dev/null)
+        then
+            echo "PostgreSQL is alive!"
+            printf "Please wait 20 seconds to gather stats... "
+            ${_su} "psql -p ${_port} -c 'select 1 from pg_stat_statement limit 0'" 2>/dev/null 1>&2
+            if [ $? == 0 ]; then
+                _pgss_init=$"COPY ( select * from pg_stat_replication
+) TO '/tmp/$OUTPUT.pg_stat_replication_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+"
+                _pgss_rst=$"select pg_stat_statements_reset();
+"
+                _pgss_fini=$"COPY ( select * from pg_stat_statements
+) TO '/tmp/$OUTPUT.pg_stat_statements_delta.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+"
+            else 
+                _pgss_init=""
+                _pgss_rst=""
+                _pgss_fini=""
+                echo "WARNING! Please install pg_stat_statements"
+            fi
+           ${_su} "psql -p ${_port}" >/dev/null << EOF
 COPY ( select * from pg_stat_user_tables
 ) TO '/tmp/$OUTPUT.pg_stat_tab_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_activity
 ) TO '/tmp/$OUTPUT.pg_stat_act1.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);     
 COPY ( select * from pg_stat_user_indexes
 ) TO '/tmp/$OUTPUT.pg_stat_ind_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);           
-COPY ( select * from pg_stat_statements
-) TO '/tmp/$OUTPUT.pg_stat_statements_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+${_pgss_init}
 COPY ( select * from pg_prepared_xacts
 ) TO '/tmp/$OUTPUT.pg_stat_prepared_xacts_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_replication
@@ -346,7 +441,7 @@ COPY ( select * from pg_stat_replication
 COPY ( select * from pg_replication_slots
 ) TO '/tmp/$OUTPUT.pg_stat_replication_slots_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 select pg_stat_reset();
-select pg_stat_statements_reset();
+${_pgss_rst}
 select pg_sleep(20);
 COPY ( select * from pg_stat_user_tables
 ) TO '/tmp/$OUTPUT.pg_stat_tab_delta.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
@@ -354,8 +449,7 @@ COPY ( select * from pg_stat_activity
 ) TO '/tmp/$OUTPUT.pg_stat_act2.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);           
 COPY ( select * from pg_stat_user_indexes
 ) TO '/tmp/$OUTPUT.pg_stat_ind_delta.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);           
-COPY ( select * from pg_stat_statements
-) TO '/tmp/$OUTPUT.pg_stat_statements_delta.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+${_pgss_fini}
 COPY ( select * from pg_prepared_xacts
 ) TO '/tmp/$OUTPUT.pg_stat_prepared_xacts_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_replication
@@ -366,6 +460,8 @@ EOF
            mv /tmp/$OUTPUT.pg_stat_*.csv ./
            add_file_to_output $OUTPUT.pg_stat_*
            echo "Done!"
+        else
+            echo "WARNING! No live PostgreSQL found on listen port ${_port}" >&2
         fi
     done
 
@@ -391,6 +487,8 @@ Flags:
 
 Available commands:
     state           gather profiling and stack info
+    stacks          gather stack info
+    snap            gather database state information
     hang            gather light core dump and profiling+stack info 
     hangkill        gather full core dump, profiling+stack info and terminate DB
 EOF
@@ -576,6 +674,16 @@ validate_cluster_params
 {
     case "$_cmd" in
         smoke)
+            exit 0
+            ;;
+        stacks)
+            pg_diagdump_gdbstacks
+            pg_diagdump_summary
+            exit 0
+            ;;
+        snap)
+            pg_diagdump_sqlsnap
+            pg_diagdump_summary
             exit 0
             ;;
         state)
