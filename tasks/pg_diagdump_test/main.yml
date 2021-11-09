@@ -1,0 +1,52 @@
+---
+
+# init var per os
+# init test_dir
+- name: "Init vars"
+  set_fact:
+    test_dir: ~/pg_diagdump_test
+    distkey: '{{ ''pg_diagdump-'' ~ ansible_distribution }}'
+    distribs:
+      #  pg_diagdump-Debian:
+      pg_diagdump-CentOS:
+        - perf
+        - gdb
+
+# install peckages per os
+- name: Install dependecies for pg_diagdump.sh
+  become: yes
+  package:
+    name: '{{ item }}'
+    state: present
+  with_items: "{{ distribs[distkey] }}"
+
+# access rights for user postgres in dir ~
+- name: "Change right to the home dir"
+  ansible.builtin.file:
+    path: "~"
+    state: directory
+    mode: '0755'
+
+# create test_dir
+- name: Create a directory if it does not exist
+  ansible.builtin.file:
+    path: "{{ test_dir }}"
+    state: directory
+    mode: '0755'
+
+# copy files via rsync
+- name: "sync playbook dir: {{ playbook_dir }}"
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}"
+    dest: "{{ test_dir }}"
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=logs"
+      - "--exclude=out"
+
+# tun tests
+- name: "do run_test_all.sh"
+  ansible.builtin.shell:
+    cmd: |
+      ./run_test_all.sh
+    chdir: "{{ test_dir }}/pg_diagdump"

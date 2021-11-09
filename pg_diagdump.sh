@@ -26,33 +26,45 @@
 # v1.2 - add procfs gathering
 # v1.3 - fix crash of postmaster 
 # v1.4 - add pgpro_stats
-#
+# v1.5 - hangling non-root & double-exec
 
-# Let's root it if not root and not postgres
-if [ $(id -u) != "0" -a $(id -un) != "postgres" ];
-then
-    if !(type sudo) >/dev/null 2>&1;
-    then
-        echo ""
-        echo "ERROR!"
-        echo "       Please execute program under postgres or root account"
-        echo "       Usage of program under other account without sudo is not supported"
-        echo ""
-        exit 1
-    fi
+# Let's root it
+function root_it {
+  if [ $_dont_use_root ]; then
+    return
+  fi
 
-    echo "INFO! Program runs only under root account. Switch to root via sudo."
+  if [ "$(id -u)" != "0" ];
+  then
+      if !(type sudo) >/dev/null 2>&1;
+      then
+          echo ""
+          echo "ERROR!"
+          echo "       Please execute program under root account"
+          echo "       Usage of program under non-root account is not yet supported"
+          echo ""
+          exit 1
+      fi
+
+      echo "WARN! Program runs only under root account. Switch to root via sudo."
+    echo "      To avoid ask password for sudo, you can add to sudoers:"
+    echo "      $USER ALL=(ALL) NOPASSWD: `readlink -f $0`"
+    exec sudo "$0" "$@"
+    exit 1
+  fi
+}
+
+    echo "WARN! Program runs only under root account. Switch to root via sudo."
 	echo "      To avoid ask password for sudo, you can add to sudoers:"
 	echo "      $USER ALL=(ALL) NOPASSWD: `readlink -f $0`"
 	exec sudo "$0" "$@"
 	exit 1
 fi
 
+function os_specific_steps {
+local unamestr
+
 unamestr=`uname`
-GZIP="gzip"
-
-WITHOUT_PERF="yes"
-
 # Normal way
 if [ "$unamestr" = "FreeBSD" ]; then
 	SYSCPU=`sysctl -n hw.ncpu`
@@ -70,6 +82,105 @@ else
         SYSCPU=`nproc`
 	PKGMG="yum install"
 fi
+}
+
+function do_getopts {
+# Parse parameters
+
+while getopts "h?D:d:j:p:v" opt; do
+    case "$opt" in
+    h|\?)
+        show_help
+        exit 0
+        ;;
+    v)  _verbose=1
+        ;;
+    p)  _listenport=$OPTARG
+        if [ "${_pgdata}" != "" ];
+        then
+            echo "ERROR! Please specify only one flag: either -p or -D" >&2
+            exit 1
+        fi
+        ;;
+    D)  _pgdata=$OPTARG
+        if [ ${_listenport} -ne 1 ];
+        then
+            echo "ERROR! Please specify only one flag: either -p or -D" >&2
+            exit 1
+        fi
+        ;;
+    d)  _target=$OPTARG
+        if [ ! -d "${_target}" ];
+        then
+            echo "ERROR! Target directory ${_target} doesn't exist" >&2
+            exit 1
+        else
+            cd ${_target}
+        fi
+        ;;
+    j)  _parallel=$OPTARG
+        re='^[0-9]+$'
+        if ! [[ ${_parallel} =~ $re ]] ; then
+            echo "ERROR! Not a number: ${_parallel}" >&2; exit 1 
+        fi
+        ;;
+    n)  _dont_use_root=1
+        ;;
+    esac
+done
+  
+  PARALLEL="${_parallel:-$SYSCPU}"
+
+  shift $((OPTIND-1))
+  _cmd=$1
+}
+
+function set_is_root {
+    if [ "$(id -u)" = "0" ]; then
+        is_root=true
+    else
+        unset is_root
+    fi
+}
+
+function set_path {
+  PATH=$PATH:/bin
+  PATH=$PATH:/sbin
+  PATH=$PATH:/usr/bin
+  PATH=$PATH:/usr/sbin
+  PATH=$PATH:/usr/local/bin
+  PATH=$PATH:/usr/local/sbin
+}
+
+function exit_if_running {
+  LOCK_FILE=/tmp/pg_diagdump.lock
+
+  touch $LOCK_FILE || {
+    echo "Error! Failed to create lock file = $LOCK_FILE"
+    exit 1
+  }
+  chmod 666 $LOCK_FILE &> /dev/null
+
+  exec {FD}<$LOCK_FILE || {
+    echo "Error! Failed to create fd to $LOCK_FILE"
+    exit 1
+  }
+
+  if ! flock --nonblock $FD; then
+      echo "It seems that script is running. Exit."
+      exit 1
+  fi
+}
+
+set_path
+os_specific_steps
+do_getopts $@
+root_it $@
+exit_if_running
+set_is_root
+
+GZIP="gzip"
+
 OUTPUT=diag_`date '+%Y%m%d_%H%M%S'`_$RANDOM
 OUTTAR="${OUTPUT}".tar
 OUTTGZ="${OUTPUT}".tar.gz
@@ -108,8 +219,10 @@ function set_term_user {
 }
 
 function prevent_oom_pid {
-  # -17 is magic, disable oom_killer for pid
-  echo -17 > /proc/${1}/oom_adj
+  if [ $is_root ]; then
+    # -17 is magic, disable oom_killer for pid
+    echo -17 > /proc/${1}/oom_adj
+  fi
 }
 
 function protect_from_oom_killer {
@@ -168,9 +281,9 @@ get_pgport_by_pid () {
 	    if (type netstat) >/dev/null 2>&1;
             then
                 if [ "$distname" = "altlinux" ]; then
-                    /bin/netstat -A inet -tanlp 2>/dev/null  | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+                    /bin/netstat -A inet -tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
                  else
-                    /bin/netstat -4tanlp 2>/dev/null  | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+                    /bin/netstat -4tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
                  fi
             elif (type ss) >/dev/null 2>&1;
             then
@@ -259,7 +372,12 @@ info registers
 thread apply all bt
 x/50xw \$sp
 x/10i \$rip
-${prints}detach
+${prints}
+if MyPgXact != 0
+printf "MyPgXact->nxids = %d\n", MyPgXact->nxids
+end
+detach
+echo \n\n
 EOF
         _fileid=$((_fileid % PARALLEL))
         _fileid=$((++_fileid))
@@ -328,6 +446,11 @@ pg_diadgump_procfs_single ()
 
 pg_diagdump_perf ()
 {
+    if [ ! $is_root ]; then
+      echo "WARNING! Need root access to use perf. Skip perf."
+      return
+    fi
+
     printf "CPU profiling... "
     if [ -z "${WITHOUT_PROFILING}" ]; 
     then
@@ -366,14 +489,21 @@ pg_diagdump_linux_kerncore_running ()
     do
         printf "Kill backend (${_master},"
         _pid=$(ps --ppid ${_master} -o pid --sort=-%cpu | grep -v ${_master} | head -2 | tail -1 | awk '{$1=$1};1')
-        echo 63 > /proc/${_pid}/coredump_filter
         printf "${_pid})... "
 
-        sysctl -qw kernel.core_pattern="|${_cp} /dev/stdin ${DESTDIR}/${OUTPUT}.coredump_%p"
+        if [ $is_root ]; then
+          echo 63 > /proc/${_pid}/coredump_filter
+          sysctl -qw kernel.core_pattern="|${_cp} /dev/stdin ${DESTDIR}/${OUTPUT}.coredump_%p"
+        fi
+
         /bin/kill -s ABRT ${_pid}
-        sleep 1
-        sysctl -qw kernel.core_pattern="${_oldpattern}"
-        add_file_to_output $OUTPUT.coredump_*
+
+        if [ $is_root ]; then
+          sleep 1
+          sysctl -qw kernel.core_pattern="${_oldpattern}"
+          add_file_to_output $OUTPUT.coredump_*
+        fi
+
         echo "Done!"
     done
 }
@@ -551,7 +681,7 @@ pg_diagdump_summary ()
 {
     gzip_outtar
     echo ""
-    echo "Generated file: ${OUTTAR}.gz"
+    echo "Generated file: $(realpath ${OUTTAR}.gz)"
 }
 
 show_help () {
@@ -714,53 +844,6 @@ check_installed_pkgs ()
         exit 1
     fi
 }
-
-# Parse parameters
-
-while getopts "h?D:d:j:p:v" opt; do
-    case "$opt" in
-    h|\?)
-        show_help
-        exit 0
-        ;;
-    v)  _verbose=1
-        ;;
-    p)  _listenport=$OPTARG
-        if [ "${_pgdata}" != "" ];
-        then
-            echo "ERROR! Please specify only one flag: either -p or -D" >&2
-            exit 1
-        fi
-        ;;
-    D)  _pgdata=$OPTARG
-        if [ ${_listenport} -ne 1 ];
-        then
-            echo "ERROR! Please specify only one flag: either -p or -D" >&2
-            exit 1
-        fi
-        ;;
-    d)  _target=$OPTARG
-        if [ ! -d "${_target}" ];
-        then
-            echo "ERROR! Target directory ${_target} doesn't exist" >&2
-            exit 1
-        else
-            cd ${_target}
-        fi
-        ;;
-    j)  _parallel=$OPTARG
-        re='^[0-9]+$'
-        if ! [[ ${_parallel} =~ $re ]] ; then
-            echo "ERROR! Not a number: ${_parallel}" >&2; exit 1 
-        fi
-        ;;
-    esac
-done
-
-PARALLEL="${_parallel:-$SYSCPU}"
-
-shift $((OPTIND-1))
-_cmd=$1
 
 if [ ${_listenport} -eq 1 -a "${_pgdata}" = "" ];
 then
