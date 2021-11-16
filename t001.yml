@@ -1,0 +1,54 @@
+- name: upload pg_diagdump
+  hosts: database
+  tasks:
+    - name: upload file to /tmp directory
+      ansible.builtin.copy:
+         src: pg_diagdump.sh
+         dest: /tmp/pg_diagdump.sh
+         mode: u=rwx,g=rx,o=rx
+    - name: install GDB
+      become: yes
+      ansible.builtin.package:
+         name: gdb
+         state: present
+
+- name: idle calls 
+  hosts: database
+  tasks:
+    - name: check 
+      command: echo $PATH
+    - name: by port (non-application user, no pgss) 
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      environment:
+         PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/local/sbin"
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != ''
+      loop: 
+        - stacks
+        - snap
+        - state
+    - name: by port (postgres, no pgss) 
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      become: yes
+      become_user: postgres
+      environment:
+         PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/local/sbin"
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != ''
+      loop: 
+        - stacks
+        - snap
+        - state
+    - name: by port (root, no pgss)
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      become: yes
+      become_user: root
+      environment:
+         PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/local/sbin"
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != ''
+      loop: 
+        - stacks
+        - snap
+        - state
+
