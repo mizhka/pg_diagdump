@@ -21,6 +21,7 @@
 # v0.7 - Add AltLinux support & full backtrace
 # v0.8 - All files in one archive
 # v0.9 - add snap & stacks, use different suffixes for each run
+# v1.0 - add target directory and amount of jobs, minor fixes, autotest coverage
 
 # Let's root it if not root and not postgres
 if [ $(id -u) != "0" -a $(id -un) != "postgres" ];
@@ -35,7 +36,7 @@ then
         exit 1
     fi
 
-    echo "WARN! Program runs only under root account. Switch to root via sudo."
+    echo "INFO! Program runs only under root account. Switch to root via sudo."
 	echo "      To avoid ask password for sudo, you can add to sudoers:"
 	echo "      $USER ALL=(ALL) NOPASSWD: `readlink -f $0`"
 	exec sudo "$0" "$@"
@@ -49,19 +50,19 @@ WITHOUT_PERF="yes"
 
 # Normal way
 if [ "$unamestr" = "FreeBSD" ]; then
-	PARALLEL=`sysctl -n hw.ncpu`
+	SYSCPU=`sysctl -n hw.ncpu`
 	WITHOUT_PERF="yes"
 	PKGMG="pkg install"
 elif [ "$unamestr" = "Linux" ]; then
         distname=`awk '/^ID=/' /etc/*-release | awk -F'=' '{ print tolower($2) }'_`
-        PARALLEL=`nproc`
+        SYSCPU=`nproc`
         if [ "$distname" = "altlinux" ]; then
                 PKGMG="apt-get install"
         else 
                 PKGMG="yum install"
         fi
 else
-        PARALLEL=`nproc`
+        SYSCPU=`nproc`
 	PKGMG="yum install"
 fi
 OUTPUT=diag_`date '+%Y%m%d_%H%M%S'`_$RANDOM
@@ -188,6 +189,7 @@ pg_diadgump_gdbstacks_single ()
     _master=$1
     _bin=$(get_exe_by_pid ${_master})
 
+    echo "Use ${PARALLEL} jobs for stack gathering"
     printf "Gathering stacks (${_master})... "
     if [[ ! -e ${_bin} ]];
     then
@@ -202,7 +204,7 @@ set verbose off
 file ${_bin}
 EOF
 
-    for i in `seq 1 $PARALLEL`
+    for i in `seq 1 ${PARALLEL}`
     do
         cp tmp.gdb tmp$i.gdb
     done
@@ -248,18 +250,18 @@ EOF
         _fileid=$((++_fileid))
     done
 
-    for i in `seq 1 $PARALLEL`
+    for i in `seq 1 ${PARALLEL}`
     do
         echo quit >> tmp$i.gdb
     done
     
-    for i in `seq 1 $PARALLEL`
+    for i in `seq 1 ${PARALLEL}`
     do
         gdb -q -n --command=tmp$i.gdb >> tmp$i.out 2>&1 &
     done
     wait
     
-    for i in `seq 1 $PARALLEL`
+    for i in `seq 1 ${PARALLEL}`
     do
         cat tmp$i.out >> $OUTPUT.stacks_${_master}
         rm tmp$i.out
@@ -376,9 +378,11 @@ COPY ( select * from pg_locks
 ) TO '/tmp/$OUTPUT.pg_snap_locks.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 ${_pgss}
 EOF
-           mv /tmp/$OUTPUT.pg_snap_*.csv ./
-           add_file_to_output $OUTPUT.pg_snap_*
-           echo "Done!"
+            if [ "${PWD}" != "/tmp" ]; then
+                mv /tmp/$OUTPUT.pg_snap_*.csv ./
+            fi
+            add_file_to_output $OUTPUT.pg_snap_*
+            echo "Done!"
         else
             echo "WARNING! No live PostgreSQL found on listen port ${_port}" >&2
         fi
@@ -487,9 +491,11 @@ COPY ( select * from pg_stat_replication
 COPY ( select * from pg_replication_slots
 ) TO '/tmp/$OUTPUT.pg_stat_replication_slots_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 EOF
-           mv /tmp/$OUTPUT.*.csv ./
-           add_file_to_output $OUTPUT.*.csv
-           echo "Done!"
+            if [ "${PWD}" != "/tmp" ]; then
+                mv /tmp/$OUTPUT.*.csv ./
+            fi
+            add_file_to_output $OUTPUT.*.csv
+            echo "Done!"
         else
             echo "WARNING! No live PostgreSQL found on listen port ${_port}" >&2
         fi
@@ -509,9 +515,11 @@ show_help () {
 pg_diagdump is a diagnostic tool for PostgreSQL.
 
 Usage:
-  pg_diagdump [ -p <LISTEN_PORT> | -D <PGDATA> ] <command>
+  pg_diagdump [-d <TARGET_DIR> ] [-j JOBS] [ -p <LISTEN_PORT> | -D <PGDATA> ] <command>
 
 Flags:
+    -d TARGET_DIR   path to directory where result files are stored to (default: current directory)
+    -j JOBS         amount of GDB process to gather stacks (default: amount of CPU coress)
     -p LISTEN_PORT  listening port for PostgreSQL database
     -D PGDATA       path to PostgreSQL database data directory
 
@@ -566,13 +574,13 @@ validate_cluster_params ()
         if [ ! -d ${_pgdata} ];
         then
             echo "ERROR! Directory ${_pgdata} doesn't exist"
-            exit 0
+            exit 1
         fi
         # check postgresql.pid
         if [ ! -f ${_pgdata}/postmaster.pid ];
         then 
             echo "ERROR! File ${_pgdata}/postmaster.pid doesn't exist"
-            exit 0
+            exit 1
         fi
         _masters=$(head -1 ${_pgdata}/postmaster.pid)
     elif [ ${_listenport} -ne 1 ];
@@ -582,7 +590,7 @@ validate_cluster_params ()
         if [ -z "${_master}" ];
         then
             echo "ERROR! Can't find postmaster listening port ${_listenport}"
-            exit 0
+            exit 1
         fi
         
         _masters=(${_master})
@@ -663,7 +671,9 @@ check_installed_pkgs ()
     fi
 }
 
-while getopts "h?p:D:v" opt; do
+# Parse parameters
+
+while getopts "h?D:d:j:p:v" opt; do
     case "$opt" in
     h|\?)
         show_help
@@ -674,19 +684,36 @@ while getopts "h?p:D:v" opt; do
     p)  _listenport=$OPTARG
         if [ "${_pgdata}" != "" ];
         then
-            echo "ERROR! Please specify only one flag: either -p or -D"
-            exit 0
+            echo "ERROR! Please specify only one flag: either -p or -D" >&2
+            exit 1
         fi
         ;;
     D)  _pgdata=$OPTARG
         if [ ${_listenport} -ne 1 ];
         then
-            echo "ERROR! Please specify only one flag: either -p or -D"
-            exit 0
+            echo "ERROR! Please specify only one flag: either -p or -D" >&2
+            exit 1
+        fi
+        ;;
+    d)  _target=$OPTARG
+        if [ ! -d "${_target}" ];
+        then
+            echo "ERROR! Target directory ${_target} doesn't exist" >&2
+            exit 1
+        else
+            cd ${_target}
+        fi
+        ;;
+    j)  _parallel=$OPTARG
+        re='^[0-9]+$'
+        if ! [[ ${_parallel} =~ $re ]] ; then
+            echo "ERROR! Not a number: ${_parallel}" >&2; exit 1 
         fi
         ;;
     esac
 done
+
+PARALLEL="${_parallel:-$SYSCPU}"
 
 shift $((OPTIND-1))
 _cmd=$1
@@ -744,6 +771,6 @@ validate_cluster_params
 				echo "ERROR! Unknown command: $_cmd"
 			fi
 			show_help
-			exit 0
+			exit 1
     esac
 }

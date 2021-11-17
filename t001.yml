@@ -17,6 +17,52 @@
   tasks:
     - name: check 
       command: echo $PATH
+    - name: no parameter
+      ansible.builtin.command: /tmp/pg_diagdump.sh
+      register: result
+      failed_when: result.rc != 1
+    - name: nonexistent target directory
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -d /nonexistent
+      register: result
+      failed_when: not (result.rc == 1 and "ERROR! Target directory /nonexistent doesn't exist" in result.stderr)
+
+    - name: check target directory /tmp
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -d /tmp snap
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != ''
+
+    - name: delete test directory /tmp/diagdump/
+      file:
+        path: /tmp/diagdump/
+        state: absent      
+      
+    - name: create test directory /tmp/diagdump/
+      file:
+        path: /tmp/diagdump/
+        state: directory
+
+    - name: check target directory /tmp/diagdump/
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -d /tmp/diagdump/ snap
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != ''
+      
+    - name: check if file is create in /tmp/diagdump/
+      register: result
+      ansible.builtin.find: 
+        paths: /tmp/diagdump/
+        patterns: 'diag*.tar.gz'
+      failed_when: result.matched != 1
+      
+    - name: check parallel option (not valid value)
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -j /tmp snap
+      register: result
+      failed_when:  not (result.rc == 1 and "ERROR! Not a number" in result.stderr)
+      
+    - name: check parallel option (valid value)
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -j 3 stacks
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != '' or "Use 3 jobs for stack gathering" not in result.stdout
+      
     - name: by port (non-application user, no pgss) 
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
       environment:
