@@ -22,6 +22,7 @@
 # v0.8 - All files in one archive
 # v0.9 - add snap & stacks, use different suffixes for each run
 # v1.0 - add target directory and amount of jobs, minor fixes, autotest coverage
+# v1.1 - fix typo in pgss detection code
 
 # Let's root it if not root and not postgres
 if [ $(id -u) != "0" -a $(id -un) != "postgres" ];

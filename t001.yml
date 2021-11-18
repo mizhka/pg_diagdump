@@ -14,6 +14,8 @@
 
 - name: idle calls 
   hosts: database
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/local/sbin"
   tasks:
     - name: check 
       command: echo $PATH
@@ -53,6 +55,26 @@
         patterns: 'diag*.tar.gz'
       failed_when: result.matched != 1
       
+    - name: drop extension if exists
+      ansible.builtin.command: psql -c 'drop extension if exists pg_stat_statements'
+      become: yes
+      become_user: postgres
+      
+    - name: check pg_stat_statement warning (no pgss)
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -d /tmp snap
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != '' or not ("WARNING! Please install pg_stat_statements" in result.stdout)
+      
+    - name: create extension
+      ansible.builtin.command: psql -c 'create extension if not exists pg_stat_statements'
+      become: yes
+      become_user: postgres
+      
+    - name: check pg_stat_statement warning (pgss)
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -d /tmp snap
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != '' or ("WARNING! Please install pg_stat_statements" in result.stdout)
+      
     - name: check parallel option (not valid value)
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -j /tmp snap
       register: result
@@ -65,32 +87,28 @@
       
     - name: by port (non-application user, no pgss) 
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
-      environment:
-         PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/local/sbin"
       register: result
       failed_when:  result.rc != 0 or result.stderr != ''
       loop: 
         - stacks
         - snap
         - state
+        
     - name: by port (postgres, no pgss) 
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
       become: yes
       become_user: postgres
-      environment:
-         PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/local/sbin"
       register: result
       failed_when:  result.rc != 0 or result.stderr != ''
       loop: 
         - stacks
         - snap
         - state
+        
     - name: by port (root, no pgss)
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
       become: yes
       become_user: root
-      environment:
-         PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/local/sbin"
       register: result
       failed_when:  result.rc != 0 or result.stderr != ''
       loop: 
