@@ -208,36 +208,29 @@ EOF
     done
     rm tmp.gdb
 
-    # check debuginfo once
-    if [ ! -f '.gdb.check' ]; then
-        cat - > tmp_check.gdb <<EOF
+    # it's enough to load postgres binary for debug symbols checking
+    cat - > tmp_check.gdb <<EOF
 set width 0
 set height 0
 set verbose off
 file ${_bin}
-attach ${_master}
 p num_held_lwlocks
 p held_lwlocks
-p MemoryContextStatsDetail(TopMemoryContext, 5000)
-eval "p *((LWLockHandle (*) [%u]) held_lwlocks)", num_held_lwlocks
-detach
 EOF
 
-        out_check=$(gdb -batch -q  -n --command=tmp_check.gdb 2>&1 >/dev/null < /dev/null | grep Error)
-        echo $out_check > .gdb.check
-        rm tmp_check.gdb
-    else 
-        out_check=$(cat .gdb.check)
-    fi
-    
+    out_check=$(gdb -batch -q  -n --command=tmp_check.gdb 2>&1 >/dev/null < /dev/null | grep Error)
+    rm tmp_check.gdb
+
     if [ "$out_check" != "" ]; then
         prints=""
     else 
         prints=$"p num_held_lwlocks
         p held_lwlocks
+        p MemoryContextStatsDetail(TopMemoryContext, 5000)
+        eval \"p *((LWLockHandle (*) [%u]) held_lwlocks)\", num_held_lwlocks
         "
     fi
-    
+
     _fileid=1
     for _backpid in $(pgrep -P ${_master})
     do 
@@ -357,7 +350,7 @@ pg_diagdump_sqlsnap ()
         then
             echo "PostgreSQL is alive!"
             printf "Please wait a bit to gather stats... "
-            ${_su} "psql -p ${_port} -c 'select 1 from pg_stat_statement limit 0'" 2>/dev/null 1>&2
+            ${_su} "psql -p ${_port} -c 'select 1 from pg_stat_statements limit 0'" 2>/dev/null 1>&2
             if [ $? == 0 ]; then
                 _pgss=$"COPY ( select * from pg_stat_statements
 ) TO '/tmp/$OUTPUT.pg_snap_statements.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
@@ -409,8 +402,8 @@ pg_diagdump_sqlstat ()
         if $(timeout 1 ${_su} "psql -p ${_port} -c 'select 1;'" > /dev/null)
         then
             echo "PostgreSQL is alive!"
-            printf "Please wait 20 seconds to gather stats... "
-            ${_su} "psql -p ${_port} -c 'select 1 from pg_stat_statement limit 0'" 2>/dev/null 1>&2
+            printf "Please wait 20 seconds to gather stats... \n"
+            ${_su} "psql -p ${_port} -c 'select 1 from pg_stat_statements limit 0'" 2>/dev/null 1>&2
             if [ $? == 0 ]; then
                 _pgss_init=$"COPY ( select * from pg_stat_replication
 ) TO '/tmp/$OUTPUT.pg_stat_replication_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
@@ -426,14 +419,46 @@ pg_diagdump_sqlstat ()
                 _pgss_fini=""
                 echo "WARNING! Please install pg_stat_statements"
             fi
+
+            ${_su} "psql -p ${_port} -c 'select 1 from pgpro_stats_statements limit 0'" 2>/dev/null 1>&2
+            if [ $? == 0 ]; then
+                _pgpro_ss_init=$"COPY ( select * from pg_stat_replication
+) TO '/tmp/$OUTPUT.pg_stat_replication_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+"
+                _pgpro_ss_rst=$"select pgpro_stats_statements_reset();
+"
+                _pgpro_ss_fini_1=$"COPY ( select * from pgpro_stats_statements
+) TO '/tmp/$OUTPUT.pgpro_stats_statements.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+"
+                _pgpro_ss_fini_2=$"COPY ( select * from pgpro_stats_totals
+) TO '/tmp/$OUTPUT.pgpro_stats_totals.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+"
+                _pgpro_ss_fini_3=$"COPY ( select * from pgpro_stats_inval_status
+) TO '/tmp/$OUTPUT.pgpro_stats_inval_status.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+"
+                _pgpro_ss_fini_4=$"COPY ( select * from pgpro_stats_metrics
+) TO '/tmp/$OUTPUT.pgpro_stats_metrics.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+"
+            else
+                _pgpro_ss_init=""
+                _pgpro_ss_rst=""
+                _pgpro_ss_fini_1=""
+                _pgpro_ss_fini_2=""
+                _pgpro_ss_fini_3=""
+                _pgpro_ss_fini_4=""
+
+                echo "NOTICE! You may install pgpro_stats"
+            fi
+
            ${_su} "psql -p ${_port}" >/dev/null << EOF
 COPY ( select * from pg_stat_user_tables
 ) TO '/tmp/$OUTPUT.pg_stat_tab_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_activity
-) TO '/tmp/$OUTPUT.pg_stat_act1.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);     
+) TO '/tmp/$OUTPUT.pg_stat_act1.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_user_indexes
-) TO '/tmp/$OUTPUT.pg_stat_ind_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);           
+) TO '/tmp/$OUTPUT.pg_stat_ind_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 ${_pgss_init}
+${_pgpro_ss_init}
 COPY ( select * from pg_prepared_xacts
 ) TO '/tmp/$OUTPUT.pg_stat_prepared_xacts_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_replication
@@ -442,14 +467,19 @@ COPY ( select * from pg_replication_slots
 ) TO '/tmp/$OUTPUT.pg_stat_replication_slots_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 select pg_stat_reset();
 ${_pgss_rst}
+${_pgpro_ss_rst}
 select pg_sleep(20);
 COPY ( select * from pg_stat_user_tables
 ) TO '/tmp/$OUTPUT.pg_stat_tab_delta.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_activity
-) TO '/tmp/$OUTPUT.pg_stat_act2.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);           
+) TO '/tmp/$OUTPUT.pg_stat_act2.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_user_indexes
-) TO '/tmp/$OUTPUT.pg_stat_ind_delta.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);           
+) TO '/tmp/$OUTPUT.pg_stat_ind_delta.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 ${_pgss_fini}
+${_pgpro_ss_fini_1}
+${_pgpro_ss_fini_2}
+${_pgpro_ss_fini_3}
+${_pgpro_ss_fini_4}
 COPY ( select * from pg_prepared_xacts
 ) TO '/tmp/$OUTPUT.pg_stat_prepared_xacts_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_replication
@@ -457,8 +487,8 @@ COPY ( select * from pg_stat_replication
 COPY ( select * from pg_replication_slots
 ) TO '/tmp/$OUTPUT.pg_stat_replication_slots_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 EOF
-           mv /tmp/$OUTPUT.pg_stat_*.csv ./
-           add_file_to_output $OUTPUT.pg_stat_*
+           mv /tmp/$OUTPUT.*.csv ./
+           add_file_to_output $OUTPUT.*.csv
            echo "Done!"
         else
             echo "WARNING! No live PostgreSQL found on listen port ${_port}" >&2
