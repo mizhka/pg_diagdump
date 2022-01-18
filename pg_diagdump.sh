@@ -23,6 +23,10 @@
 # v0.9 - add snap & stacks, use different suffixes for each run
 # v1.0 - add target directory and amount of jobs, minor fixes, autotest coverage
 # v1.1 - fix typo in pgss detection code
+# v1.2 - add procfs gathering
+# v1.3 - fix crash of postmaster 
+# v1.4 - add pgpro_stats
+#
 
 # Let's root it if not root and not postgres
 if [ $(id -u) != "0" -a $(id -un) != "postgres" ];
@@ -491,7 +495,7 @@ pg_diagdump_sqlstat ()
                 _pgpro_ss_fini_3=""
                 _pgpro_ss_fini_4=""
 
-                echo "NOTICE! You may install pgpro_stats"
+                echo "NOTICE! Consider installation of pgpro_stats if possible"
             fi
 
            ${_su} "psql -p ${_port}" >/dev/null << EOF
