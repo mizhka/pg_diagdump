@@ -11,11 +11,10 @@
 #        warning of hangkill
 #        improved search of victim process
 # v0.3 - added check presence of gdb
-#		 added check of uid (must be root) 
+#		 added check of uid (must be root)
 #		 added try to switch to root via sudo
-#		 show list of generated files 
+#		 show list of generated files
 # v0.4 - added '-n' option to gdb to avoid .gdbinit
-# 
 # v0.5 - add sqlstats into state command
 # v0.6 - add pg_stat_activity and held LW locks
 # v0.7 - Add AltLinux support & full backtrace
@@ -24,160 +23,9 @@
 # v1.0 - add target directory and amount of jobs, minor fixes, autotest coverage
 # v1.1 - fix typo in pgss detection code
 # v1.2 - add procfs gathering
-# v1.3 - fix crash of postmaster 
+# v1.3 - fix crash of postmaster
 # v1.4 - add pgpro_stats
 # v1.5 - hangling non-root & double-exec
-
-# Let's root it
-function root_it {
-  if [ $_dont_use_root ]; then
-    return
-  fi
-
-  if [ "$(id -u)" != "0" ];
-  then
-      if !(type sudo) >/dev/null 2>&1;
-      then
-          echo ""
-          echo "ERROR!"
-          echo "       Please execute program under root account"
-          echo "       Usage of program under non-root account is not yet supported"
-          echo ""
-          exit 1
-      fi
-
-      echo "WARN! Program runs only under root account. Switch to root via sudo."
-    echo "      To avoid ask password for sudo, you can add to sudoers:"
-    echo "      $USER ALL=(ALL) NOPASSWD: `readlink -f $0`"
-    exec sudo "$0" "$@"
-    exit 1
-  fi
-}
-
-    echo "WARN! Program runs only under root account. Switch to root via sudo."
-	echo "      To avoid ask password for sudo, you can add to sudoers:"
-	echo "      $USER ALL=(ALL) NOPASSWD: `readlink -f $0`"
-	exec sudo "$0" "$@"
-	exit 1
-fi
-
-function os_specific_steps {
-local unamestr
-
-unamestr=`uname`
-# Normal way
-if [ "$unamestr" = "FreeBSD" ]; then
-	SYSCPU=`sysctl -n hw.ncpu`
-	WITHOUT_PERF="yes"
-	PKGMG="pkg install"
-elif [ "$unamestr" = "Linux" ]; then
-        distname=`awk '/^ID=/' /etc/*-release | awk -F'=' '{ print tolower($2) }'_`
-        SYSCPU=`nproc`
-        if [ "$distname" = "altlinux" ]; then
-                PKGMG="apt-get install"
-        else 
-                PKGMG="yum install"
-        fi
-else
-        SYSCPU=`nproc`
-	PKGMG="yum install"
-fi
-}
-
-function do_getopts {
-# Parse parameters
-
-while getopts "h?D:d:j:p:v" opt; do
-    case "$opt" in
-    h|\?)
-        show_help
-        exit 0
-        ;;
-    v)  _verbose=1
-        ;;
-    p)  _listenport=$OPTARG
-        if [ "${_pgdata}" != "" ];
-        then
-            echo "ERROR! Please specify only one flag: either -p or -D" >&2
-            exit 1
-        fi
-        ;;
-    D)  _pgdata=$OPTARG
-        if [ ${_listenport} -ne 1 ];
-        then
-            echo "ERROR! Please specify only one flag: either -p or -D" >&2
-            exit 1
-        fi
-        ;;
-    d)  _target=$OPTARG
-        if [ ! -d "${_target}" ];
-        then
-            echo "ERROR! Target directory ${_target} doesn't exist" >&2
-            exit 1
-        else
-            cd ${_target}
-        fi
-        ;;
-    j)  _parallel=$OPTARG
-        re='^[0-9]+$'
-        if ! [[ ${_parallel} =~ $re ]] ; then
-            echo "ERROR! Not a number: ${_parallel}" >&2; exit 1 
-        fi
-        ;;
-    n)  _dont_use_root=1
-        ;;
-    esac
-done
-  
-  PARALLEL="${_parallel:-$SYSCPU}"
-
-  shift $((OPTIND-1))
-  _cmd=$1
-}
-
-function set_is_root {
-    if [ "$(id -u)" = "0" ]; then
-        is_root=true
-    else
-        unset is_root
-    fi
-}
-
-function set_path {
-  PATH=$PATH:/bin
-  PATH=$PATH:/sbin
-  PATH=$PATH:/usr/bin
-  PATH=$PATH:/usr/sbin
-  PATH=$PATH:/usr/local/bin
-  PATH=$PATH:/usr/local/sbin
-}
-
-function exit_if_running {
-  LOCK_FILE=/tmp/pg_diagdump.lock
-
-  touch $LOCK_FILE || {
-    echo "Error! Failed to create lock file = $LOCK_FILE"
-    exit 1
-  }
-  chmod 666 $LOCK_FILE &> /dev/null
-
-  exec {FD}<$LOCK_FILE || {
-    echo "Error! Failed to create fd to $LOCK_FILE"
-    exit 1
-  }
-
-  if ! flock --nonblock $FD; then
-      echo "It seems that script is running. Exit."
-      exit 1
-  fi
-}
-
-set_path
-os_specific_steps
-do_getopts $@
-root_it $@
-exit_if_running
-set_is_root
 
 GZIP="gzip"
 
@@ -193,6 +41,151 @@ _masters=()
 _listenport=1
 _pgdata=""
 
+############# Begin of functions ###############
+
+function log_exit() {
+    # echo "exit stack: ${LINENO} ${BASH_LINENO[*]}"
+    exit 1
+}
+
+# Let's root it
+function root_it {
+    if [ $_dont_use_root ]; then
+        return
+    fi
+
+    if [ "$(id -u)" != "0" ];
+    then
+        if !(type sudo) >/dev/null 2>&1;
+        then
+            echo ""
+            echo "ERROR!"
+            echo "       Please execute program under root account"
+            echo "       Usage of program under non-root account is not yet supported"
+            echo ""
+            echo $
+            log_exit
+        fi
+
+        echo "WARN! Program runs only under root account. Switch to root via sudo."
+        echo "      To avoid ask password for sudo, you can add to sudoers:"
+        echo "      $USER ALL=(ALL) NOPASSWD: `readlink -f $0`"
+        exec sudo "$0" "$@"
+        log_exit
+    fi
+}
+
+function os_specific_steps {
+    local unamestr
+
+    unamestr=`uname`
+    # Normal way
+    if [ "$unamestr" = "FreeBSD" ]; then
+        SYSCPU=`sysctl -n hw.ncpu`
+        WITHOUT_PERF="yes"
+        PKGMG="pkg install"
+    elif [ "$unamestr" = "Linux" ]; then
+        distname=`awk '/^ID=/' /etc/*-release | awk -F'=' '{ print tolower($2) }'_`
+        SYSCPU=`nproc`
+        if [ "$distname" = "altlinux" ]; then
+            PKGMG="apt-get install"
+        else
+            PKGMG="yum install"
+        fi
+    else
+        SYSCPU=`nproc`
+        PKGMG="yum install"
+    fi
+}
+
+# Parse parameters
+function do_getopts {
+
+    while getopts "h?D:d:j:p:nv" opt; do
+        case "$opt" in
+        h|\?)
+            show_help
+            exit 0
+            ;;
+        v)  _verbose=1
+            ;;
+        p)  _listenport=$OPTARG
+            if [ "${_pgdata}" != "" ];
+            then
+                echo "ERROR! Please specify only one flag: either -p or -D" >&2
+                log_exit
+            fi
+            ;;
+        D)  _pgdata=$OPTARG
+            if [ ${_listenport} -ne 1 ];
+            then
+                echo "ERROR! Please specify only one flag: either -p or -D" >&2
+                log_exit
+            fi
+            ;;
+        d)  _target=$OPTARG
+            if [ ! -d "${_target}" ];
+            then
+                echo "ERROR! Target directory ${_target} doesn't exist" >&2
+                log_exit
+            else
+                cd ${_target}
+            fi
+            ;;
+        j)  _parallel=$OPTARG
+            re='^[0-9]+$'
+            if ! [[ ${_parallel} =~ $re ]] ; then
+                echo "ERROR! Not a number: ${_parallel}" >&2; log_exit
+            fi
+            ;;
+        n)  _dont_use_root=1
+            ;;
+        esac
+    done
+
+    PARALLEL="${_parallel:-$SYSCPU}"
+
+    shift $((OPTIND-1))
+    _cmd=$1
+}
+
+function set_is_root {
+    if [ "$(id -u)" = "0" ]; then
+        is_root=true
+    else
+        unset is_root
+    fi
+}
+
+function set_path {
+    PATH=$PATH:/bin
+    PATH=$PATH:/sbin
+    PATH=$PATH:/usr/bin
+    PATH=$PATH:/usr/sbin
+    PATH=$PATH:/usr/local/bin
+    PATH=$PATH:/usr/local/sbin
+}
+
+function exit_if_running {
+    LOCK_FILE=/tmp/pg_diagdump.lock
+
+    touch $LOCK_FILE || {
+        echo "Error! Failed to create lock file = $LOCK_FILE"
+        log_exit
+    }
+    chmod 666 $LOCK_FILE &> /dev/null
+
+    exec {FD}<$LOCK_FILE || {
+        echo "Error! Failed to create fd to $LOCK_FILE"
+        log_exit
+    }
+
+    if ! flock --nonblock $FD; then
+        echo "It seems that script is running. Exit."
+        log_exit
+    fi
+}
+
 # search for non privileged user
 function set_term_user {
     local _user _user_detect_cmds _cmd
@@ -201,51 +194,50 @@ function set_term_user {
 
     # search for not empty, not root
     for _cmd in "${_user_detect_cmds[@]}"; do
-      _user=$($_cmd)
-      if [ "${_user}" != "root" ] && [ "${_user}" != "" ]; then
-        TERM_USER="${_user}"
-        return
-      fi
+        _user=$($_cmd)
+        if [ "${_user}" != "root" ] && [ "${_user}" != "" ]; then
+            TERM_USER="${_user}"
+            return
+        fi
     done
 
     # not root is not found, so root is acceptable
     for _cmd in "${_user_detect_cmds[@]}"; do
-      _user=$($_cmd)
-      if [ "${_user}" != "" ]; then
-        TERM_USER="${_user}"
-        return
-      fi
+        _user=$($_cmd)
+        if [ "${_user}" != "" ]; then
+            TERM_USER="${_user}"
+            return
+        fi
     done
 }
 
 function prevent_oom_pid {
-  if [ $is_root ]; then
-    # -17 is magic, disable oom_killer for pid
-    echo -17 > /proc/${1}/oom_adj
-  fi
+    if [ $is_root ]; then
+        # -17 is magic, disable oom_killer for pid
+        echo -17 > /proc/${1}/oom_adj
+    fi
 }
 
 function protect_from_oom_killer {
-  if [ $(id -u) == "0" ];
-  then
-    # protect ssh
-    pgrep -f "sshd" | while read PID; do prevent_oom_pid ${PID}; done
-    # protect parent process
-    prevent_oom_pid $PPID
-    # protect current process
-    prevent_oom_pid $$
-  fi
+    if [ $is_root ]; then
+        # protect ssh
+        pgrep -f "sshd" | while read PID; do prevent_oom_pid ${PID}; done
+        # protect parent process
+        prevent_oom_pid $PPID
+        # protect current process
+        prevent_oom_pid $$
+    fi
 }
 
 add_file_to_output() {
-  chown ${TERM_USER}:${TERM_USER} ${@}
-  tar -uf ${OUTTAR} ${@}
-  rm -f ${@}
+    chown ${TERM_USER}:${TERM_USER} ${@}
+    tar -uf ${OUTTAR} ${@}
+    rm -f ${@}
 }
 
 gzip_outtar() {
-  gzip ${OUTTAR}
-  chown ${TERM_USER}:${TERM_USER} ${OUTTGZ}
+    gzip ${OUTTAR}
+    chown ${TERM_USER}:${TERM_USER} ${OUTTGZ}
 }
 
 get_postmaster_by_port () {
@@ -258,7 +250,7 @@ get_postmaster_by_port () {
 	elif (type ss) >/dev/null 2>&1;
     then
         if [ "$distname" = "altlinux" ]; then
-	        ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*,\([0-9]\{1,\}\),.*#\1#" 
+	        ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*,\([0-9]\{1,\}\),.*#\1#"
 	    else
 		    ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
 	    fi
@@ -303,7 +295,7 @@ get_exe_by_pid () {
 pg_diagdump_gdbstacks ()
 {
     local _master
-    
+
     for _master in ${_masters}
     do
         pg_diadgump_gdbstacks_single ${_master}
@@ -313,7 +305,7 @@ pg_diagdump_gdbstacks ()
 pg_diadgump_gdbstacks_single ()
 {
     local _master _bin _fileid
-    
+
     _master=$1
     _bin=$(get_exe_by_pid ${_master})
 
@@ -387,13 +379,13 @@ EOF
     do
         echo quit >> tmp$i.gdb
     done
-    
+
     for i in `seq 1 ${PARALLEL}`
     do
         gdb -q -n --command=tmp$i.gdb >> tmp$i.out 2>&1 &
     done
     wait
-    
+
     for i in `seq 1 ${PARALLEL}`
     do
         cat tmp$i.out >> $OUTPUT.stacks_${_master}
@@ -401,14 +393,14 @@ EOF
         rm tmp$i.gdb
     done
     add_file_to_output $OUTPUT.stacks_${_master}
-    
+
     echo "Done!"
 }
 
 pg_diagdump_procfs ()
 {
     local _master
-    
+
     for _master in ${_masters}
     do
         pg_diadgump_procfs_single ${_master}
@@ -418,7 +410,7 @@ pg_diagdump_procfs ()
 pg_diadgump_procfs_single ()
 {
     local _master _bin _fileid
-    
+
     _master=$1
     _target=$OUTPUT.procfs_${_master}
     _bin=$(get_exe_by_pid ${_master})
@@ -429,18 +421,18 @@ pg_diadgump_procfs_single ()
         echo "Can't find postgresql binary of " ${_master} ${_bin}
         ps -g postgres -f
     fi
-    
+
     echo ${_master} >> ${_target}
     cat /proc/${_master}/status >> ${_target} 2>&1
-    
+
     for _backpid in $(pgrep -P ${_master})
-    do 
+    do
         echo ${_backpid} >> ${_target}
         cat /proc/${_backpid}/status >> ${_target} 2>&1
     done
-    
+
     add_file_to_output ${_target}
-    
+
     echo "Done!"
 }
 
@@ -452,10 +444,10 @@ pg_diagdump_perf ()
     fi
 
     printf "CPU profiling... "
-    if [ -z "${WITHOUT_PROFILING}" ]; 
+    if [ -z "${WITHOUT_PROFILING}" ];
     then
         rm -f perf.data
-        perf record -F 99 -a -g --call-graph=dwarf sleep 2 >$OUTPUT.perf 2>&1 
+        perf record -F 99 -a -g --call-graph=dwarf sleep 2 >$OUTPUT.perf 2>&1
         perf script --header --fields comm,pid,tid,time,event,ip,sym,dso >> $OUTPUT.perf
         rm perf.data
         add_file_to_output $OUTPUT.perf
@@ -466,7 +458,7 @@ pg_diagdump_perf ()
 pg_diagdump_gcore_running ()
 {
     local _master _pid
-    
+
     for _master in ${_masters}
     do
         printf "Gathering coredump (${_master},"
@@ -508,7 +500,7 @@ pg_diagdump_linux_kerncore_running ()
     done
 }
 
-pg_diagdump_sqlsnap () 
+pg_diagdump_sqlsnap ()
 {
     local _master _port _su
 
@@ -539,9 +531,9 @@ pg_diagdump_sqlsnap ()
 COPY ( select * from pg_stat_user_tables
 ) TO '/tmp/$OUTPUT.pg_snap_user_tables.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_activity
-) TO '/tmp/$OUTPUT.pg_snap_activity.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);     
+) TO '/tmp/$OUTPUT.pg_snap_activity.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_user_indexes
-) TO '/tmp/$OUTPUT.pg_snap_user_indexes.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);           
+) TO '/tmp/$OUTPUT.pg_snap_user_indexes.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_prepared_xacts
 ) TO '/tmp/$OUTPUT.pg_snap_prepared_xacts.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_replication
@@ -573,7 +565,7 @@ pg_diagdump_sqlstat ()
     else
         _su="bash -c"
     fi
-    
+
     for _master in ${_masters}
     do
         _port=$(get_pgport_by_pid ${_master})
@@ -689,24 +681,26 @@ show_help () {
 pg_diagdump is a diagnostic tool for PostgreSQL.
 
 Usage:
-  pg_diagdump [-d <TARGET_DIR> ] [-j JOBS] [ -p <LISTEN_PORT> | -D <PGDATA> ] <command>
+  pg_diagdump [-d <TARGET_DIR> ] [-n] [-j JOBS] [ -p <LISTEN_PORT> | -D <PGDATA> ] <command>
 
 Flags:
     -d TARGET_DIR   path to directory where result files are stored to (default: current directory)
     -j JOBS         amount of GDB process to gather stacks (default: amount of CPU coress)
     -p LISTEN_PORT  listening port for PostgreSQL database
     -D PGDATA       path to PostgreSQL database data directory
+    -n              execute under current non-root user (avoid usage of sudo)
 
 Available commands:
-    state           gather profiling and stack info
-    stacks          gather stack info
-    snap            gather database state information
     hang            gather light core dump and profiling+stack info 
     hangkill        gather full core dump, profiling+stack info and terminate DB
+    procfs          gather information about backends from procfs
+    snap            gather database state information
+    stacks          gather stack info
+    state           gather profiling and stack info
 EOF
 }
 
-ask_confirmation () 
+ask_confirmation ()
 {
     echo ""
     echo "WARNING! This command will terminate processes of PostgreSQL database"
@@ -734,39 +728,37 @@ check_running_pg ()
         echo "       Please check if postgres is running"
         echo ""
         show_help
-        exit 1
+        log_exit
     fi
 }
 
 validate_cluster_params ()
 {
     local _master
-    
+
     if [ ! -z "${_pgdata}" ];
     then
-        # check exists PGDATA 
+        # check exists PGDATA
         if [ ! -d ${_pgdata} ];
         then
             echo "ERROR! Directory ${_pgdata} doesn't exist"
-            exit 1
+            log_exit
         fi
         # check postgresql.pid
         if [ ! -f ${_pgdata}/postmaster.pid ];
         then 
             echo "ERROR! File ${_pgdata}/postmaster.pid doesn't exist"
-            exit 1
+            log_exit
         fi
         _masters=$(head -1 ${_pgdata}/postmaster.pid)
     elif [ ${_listenport} -ne 1 ];
     then
         _master=$(get_postmaster_by_port ${_listenport})
-        
         if [ -z "${_master}" ];
         then
             echo "ERROR! Can't find postmaster listening port ${_listenport}"
-            exit 1
+            log_exit
         fi
-        
         _masters=(${_master})
     else
         for BGPID in $(pgrep -f "${MARKER}")
@@ -791,8 +783,22 @@ validate_cluster_params ()
 
 check_installed_pkgs ()
 {
-    local _missing
-    
+    local _missing _checkperf
+    case "$_cmd" in
+        hang)
+            _checkperf="yes"
+            ;;
+        hangkill)
+            _checkperf="yes"
+            ;;
+        state)
+            _checkperf="yes"
+            ;;
+		*)
+            _checkperf="no"
+            ;;
+    esac
+
     _missing=()
     if ! (type pigz) >/dev/null 2>&1;
     then
@@ -814,21 +820,23 @@ check_installed_pkgs ()
         _missing+=('gdb')
     fi
 
-    if ! (type perf) >/dev/null 2>&1;
-    then
-        if [ -z "${WITHOUT_PERF}" -a -z "${WITHOUT_PROFILING}" ];
+    if [ "$_checkperf" = "yes" ]; then
+        if ! (type perf) >/dev/null 2>&1;
         then
-            if [ "$distname" = "altlinux" ]; then
-                _missing+=('linux-tools-<YOUR KERNEL>')
+            if [ -z "${WITHOUT_PERF}" -a -z "${WITHOUT_PROFILING}" ];
+            then
+                if [ "$distname" = "altlinux" ]; then
+                    _missing+=('linux-tools-<YOUR KERNEL>')
+                else
+                    _missing+=('perf')
+                fi
             else
-                _missing+=('perf')
+                WITHOUT_PROFILING=yes
             fi
-        else
-            WITHOUT_PROFILING=yes
         fi
     fi
 
-    if [ ! -z "${WITHOUT_PROFILING}" ]; 
+    if [ ! -z "${WITHOUT_PROFILING}" ];
     then
         echo ""
         echo "WARNING! CPU profiling will be skipped due to environment variables"
@@ -841,14 +849,23 @@ check_installed_pkgs ()
         echo "ERROR!"
         echo "       Please install prerequisites: ${PKGMG} ${_missing[*]}"
         echo ""
-        exit 1
+        log_exit
     fi
 }
+
+############ End of functions ################
+
+set_path
+os_specific_steps
+do_getopts $@
+root_it $@
+exit_if_running
+set_is_root
 
 if [ ${_listenport} -eq 1 -a "${_pgdata}" = "" ];
 then
     show_help
-    exit 1
+    log_exit
 fi
 
 set_term_user
@@ -857,32 +874,7 @@ protect_from_oom_killer
 validate_cluster_params
 {
     case "$_cmd" in
-        smoke)
-            exit 0
-            ;;
-        procfs)
-            pg_diagdump_procfs
-            pg_diagdump_summary
-            exit 0
-            ;;            
-        stacks)
-            pg_diagdump_gdbstacks
-            pg_diagdump_summary
-            exit 0
-            ;;
-        snap)
-            pg_diagdump_sqlsnap
-            pg_diagdump_summary
-            exit 0
-            ;;
-        state)
-            pg_diagdump_gdbstacks
-            pg_diagdump_perf
-            pg_diagdump_sqlstat
-            pg_diagdump_summary
-            exit 0
-            ;;
-        hang)			
+        hang)
             pg_diagdump_perf
             pg_diagdump_gdbstacks
             pg_diagdump_gcore_running
@@ -897,12 +889,35 @@ validate_cluster_params
             pg_diagdump_summary
             exit 0
             ;;
+        procfs)
+            pg_diagdump_procfs
+            pg_diagdump_summary
+            exit 0
+            ;;
+        snap)
+            pg_diagdump_sqlsnap
+            pg_diagdump_summary
+            exit 0
+            ;;
+        stacks)
+            pg_diagdump_gdbstacks
+            pg_diagdump_summary
+            exit 0
+            ;;
+        state)
+            pg_diagdump_gdbstacks
+            pg_diagdump_perf
+            pg_diagdump_sqlstat
+            pg_diagdump_summary
+            exit 0
+            ;;
+
 		*)
-			if [ ! -z ${_cmd} ]; 
+			if [ ! -z ${_cmd} ];
 			then
 				echo "ERROR! Unknown command: $_cmd"
 			fi
 			show_help
-			exit 1
+			log_exit
     esac
 }

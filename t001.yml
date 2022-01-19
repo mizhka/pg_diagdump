@@ -84,7 +84,7 @@
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 -j 3 stacks
       register: result
       failed_when:  result.rc != 0 or result.stderr != '' or "Use 3 jobs for stack gathering" not in result.stdout
-      
+
     - name: by port (non-application user, no pgss) 
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
       register: result
@@ -92,14 +92,39 @@
       loop: 
         - stacks
         - snap
+
+    - name: install perf
+      become: yes
+      ansible.builtin.package:
+         name: perf
+         state: absent
+
+    - name: check state without perf (non-application user, no pgss) 
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      register: result
+      failed_when: result.rc != 1
+      loop:
+        - state
+
+    - name: install perf
+      become: yes
+      ansible.builtin.package:
+         name: perf
+         state: present
+      
+    - name: by port (non-application user, no pgss) 
+      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      register: result
+      failed_when:  result.rc != 0 or result.stderr != ''
+      loop:
         - state
         
     - name: by port (postgres, no pgss) 
-      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      ansible.builtin.command: /tmp/pg_diagdump.sh -n -p 5432 {{ item }}
       become: yes
       become_user: postgres
       register: result
-      failed_when:  result.rc != 0 or result.stderr != ''
+      failed_when:  result.rc != 0
       loop: 
         - stacks
         - snap
