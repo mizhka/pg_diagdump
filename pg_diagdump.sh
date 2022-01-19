@@ -11,9 +11,9 @@
 #        warning of hangkill
 #        improved search of victim process
 # v0.3 - added check presence of gdb
-#		 added check of uid (must be root)
-#		 added try to switch to root via sudo
-#		 show list of generated files
+#         added check of uid (must be root)
+#         added try to switch to root via sudo
+#         show list of generated files
 # v0.4 - added '-n' option to gdb to avoid .gdbinit
 # v0.5 - add sqlstats into state command
 # v0.6 - add pg_stat_activity and held LW locks
@@ -242,35 +242,35 @@ gzip_outtar() {
 
 get_postmaster_by_port () {
 
-	if [ "$unamestr" = "FreeBSD" ]; then
-		sockstat -4lq -p ${1} | cut -f3 -w
-	elif (type netstat) >/dev/null 2>&1;
+    if [ "$unamestr" = "FreeBSD" ]; then
+        sockstat -4lq -p ${1} | cut -f3 -w
+    elif (type netstat) >/dev/null 2>&1;
     then
         /bin/netstat -4tanlp 2>/dev/null | grep "${1}" | sed -e 's#.* \([0-9]\{1,\}\)\/.*#\1#g'
-	elif (type ss) >/dev/null 2>&1;
+    elif (type ss) >/dev/null 2>&1;
     then
         if [ "$distname" = "altlinux" ]; then
-	        ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*,\([0-9]\{1,\}\),.*#\1#"
-	    else
-		    ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
-	    fi
-	fi
+            ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*,\([0-9]\{1,\}\),.*#\1#"
+        else
+            ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
+        fi
+    fi
 }
 
 get_pgdata_by_pid () {
-	if [ "$unamestr" = "FreeBSD" ]; then
-		procstat -he ${1} | sed -E 's/.*PGDATA=([^ ]+).*/\1/g'
-	else
-		/bin/readlink -e /proc/${1}/cwd
+    if [ "$unamestr" = "FreeBSD" ]; then
+        procstat -he ${1} | sed -E 's/.*PGDATA=([^ ]+).*/\1/g'
+    else
+        /bin/readlink -e /proc/${1}/cwd
 
-	fi
+    fi
 }
 
 get_pgport_by_pid () {
-	if [ "$unamestr" = "FreeBSD" ]; then
-		sockstat | grep "${1}" | grep tcp4 | cut -f6 -w | cut -f2 -d:
-	else
-	    if (type netstat) >/dev/null 2>&1;
+    if [ "$unamestr" = "FreeBSD" ]; then
+        sockstat | grep "${1}" | grep tcp4 | cut -f6 -w | cut -f2 -d:
+    else
+        if (type netstat) >/dev/null 2>&1;
             then
                 if [ "$distname" = "altlinux" ]; then
                     /bin/netstat -A inet -tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
@@ -281,15 +281,15 @@ get_pgport_by_pid () {
             then
                 ss -4tanlp | grep "pid=${1}," | cut -f2 -d: | cut -f1 -d " "
             fi
-	fi
+    fi
 }
 
 get_exe_by_pid () {
-	if [ "$unamestr" = "FreeBSD" ]; then
-		procstat -hb ${1} | cut -f4 -w
-	else
-		readlink /proc/${_master}/exe
-	fi
+    if [ "$unamestr" = "FreeBSD" ]; then
+        procstat -hb ${1} | cut -f4 -w
+    else
+        readlink /proc/${_master}/exe
+    fi
 }
 
 pg_diagdump_gdbstacks ()
@@ -794,7 +794,7 @@ check_installed_pkgs ()
         state)
             _checkperf="yes"
             ;;
-		*)
+        *)
             _checkperf="no"
             ;;
     esac
@@ -912,12 +912,12 @@ validate_cluster_params
             exit 0
             ;;
 
-		*)
-			if [ ! -z ${_cmd} ];
-			then
-				echo "ERROR! Unknown command: $_cmd"
-			fi
-			show_help
-			log_exit
+        *)
+            if [ ! -z ${_cmd} ];
+            then
+                echo "ERROR! Unknown command: $_cmd"
+            fi
+            show_help
+            log_exit
     esac
 }
