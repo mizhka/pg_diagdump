@@ -104,6 +104,7 @@
         - stacks
         - snap
         - state
+        - procfs
         
     - name: by port (root, no pgss)
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
@@ -115,4 +116,5 @@
         - stacks
         - snap
         - state
+        - procfs
 

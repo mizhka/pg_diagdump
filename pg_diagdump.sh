@@ -183,6 +183,16 @@ get_exe_by_pid () {
 	fi
 }
 
+pg_diagdump_gdbstacks ()
+{
+    local _master
+    
+    for _master in ${_masters}
+    do
+        pg_diadgump_gdbstacks_single ${_master}
+    done
+}
+
 pg_diadgump_gdbstacks_single ()
 {
     local _master _bin _fileid
@@ -273,14 +283,43 @@ EOF
     echo "Done!"
 }
 
-pg_diagdump_gdbstacks ()
+pg_diagdump_procfs ()
 {
     local _master
     
     for _master in ${_masters}
     do
-        pg_diadgump_gdbstacks_single ${_master}
+        pg_diadgump_procfs_single ${_master}
     done
+}
+
+pg_diadgump_procfs_single ()
+{
+    local _master _bin _fileid
+    
+    _master=$1
+    _target=$OUTPUT.procfs_${_master}
+    _bin=$(get_exe_by_pid ${_master})
+
+    printf "Gathering procfs information (${_master})... "
+    if [[ ! -e ${_bin} ]];
+    then
+        echo "Can't find postgresql binary of " ${_master} ${_bin}
+        ps -g postgres -f
+    fi
+    
+    echo ${_master} >> ${_target}
+    cat /proc/${_master}/status >> ${_target} 2>&1
+    
+    for _backpid in $(pgrep -P ${_master})
+    do 
+        echo ${_backpid} >> ${_target}
+        cat /proc/${_backpid}/status >> ${_target} 2>&1
+    done
+    
+    add_file_to_output ${_target}
+    
+    echo "Done!"
 }
 
 pg_diagdump_perf ()
@@ -734,6 +773,11 @@ validate_cluster_params
         smoke)
             exit 0
             ;;
+        procfs)
+            pg_diagdump_procfs
+            pg_diagdump_summary
+            exit 0
+            ;;            
         stacks)
             pg_diagdump_gdbstacks
             pg_diagdump_summary
