@@ -766,6 +766,29 @@ validate_cluster_params ()
             _master=$(cut -f 4 -d' ' /proc/$BGPID/stat)
             _masters+=(${_master})
         done
+
+        if [ "${#_masters[@]}" == "0" ]; then
+            echo ""
+            echo "ERROR!"
+            echo "       No one PostgreSQL instance is found."
+            echo "       Please check if postgres is running."
+            echo ""
+            show_help
+            log_exit
+        fi
+
+        if [ "${#_masters[@]}" -gt "1" ]; then
+            echo ""
+            echo "ERROR!"
+            echo "       Found more than one PostgreSQL instance."
+            echo "       Please specify:"
+            echo "       -p <LISTEN_PORT>    or"
+            echo "       -D <PGDATA>"
+            echo "       to select one PostgreSQL instance."
+            echo ""
+            show_help
+            log_exit
+        fi
     fi
 
     for _master in ${_masters}
@@ -861,12 +884,6 @@ do_getopts $@
 root_it $@
 exit_if_running
 set_is_root
-
-if [ ${_listenport} -eq 1 -a "${_pgdata}" = "" ];
-then
-    show_help
-    log_exit
-fi
 
 set_term_user
 check_installed_pkgs
