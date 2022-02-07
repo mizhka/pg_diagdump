@@ -14,13 +14,15 @@ pgbench -U postgres -d postgres --time=600 --client=1 &> /dev/null &
 pgbench_pid=$!
 
 # clean out dir
-OUT_DIR="$SD/out"
+OUT_DIR="/tmp/out"
+PG_DIAGDUMP="$SD/../pg_diagdump.sh"
 mkdir -p "$OUT_DIR"
+chmod 777 "$OUT_DIR"
 rm -rf "$OUT_DIR"/*
 
 # run pg_diagdump.sh
 exec 5>&1
-file_msg=$(yes | sudo "$SD/pg_diagdump.sh" -p 5432 -C "$OUT_DIR" hangkill | tee >(cat - >&5) )
+file_msg=$( sudo -u postgres "$PG_DIAGDUMP" -p 5432 -d "$OUT_DIR" -n state | tee >(cat - >&5) )
 
 # kill pgbench by pid
 kill $pgbench_pid &> /dev/null
@@ -41,12 +43,6 @@ tar -xzf "$file" -C "$OUT_DIR/pg_results"
 thread_count=$(grep 'exe =' "$OUT_DIR"/pg_results/diag_*.stacks* | grep postgres | wc -l)
 if [ "$thread_count" == "0" ]; then
   echo "Error! Invalid stacks file."
-  exit 1
-fi
-
-coredump_file=$(find "$OUT_DIR"/pg_results -name "diag_*coredump*")
-if [ ! -f "$coredump_file" ]; then
-  echo "coredump file doesn't exist, file = $coredump_file"
   exit 1
 fi
 

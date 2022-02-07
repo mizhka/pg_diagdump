@@ -4,23 +4,24 @@
 SD="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 # init pgbench before test
-pgbench -U postgres -d postgres -i || {
+pgbench -U postgres -d postgres -p 5432 -i || {
   echo "pgbench init failed"
   exit 1
 }
 
 # run pgbench to create work load
-pgbench -U postgres -d postgres --time=600 --client=1 &> /dev/null &
+pgbench -U postgres -d postgres -p 5432 --time=600 --client=1 &> /dev/null &
 pgbench_pid=$!
 
 # clean out dir
 OUT_DIR="$SD/out"
+PG_DIAGDUMP="$SD/../pg_diagdump.sh"
 mkdir -p "$OUT_DIR"
 rm -rf "$OUT_DIR"/*
 
 # run pg_diagdump.sh
 exec 5>&1
-file_msg=$( sudo "$SD/pg_diagdump.sh" -p 5432 -C "$OUT_DIR" state | tee >(cat - >&5) )
+file_msg=$( sudo "$PG_DIAGDUMP" -p 5432 -d "$OUT_DIR" state | tee >(cat - >&5) )
 
 # kill pgbench by pid
 kill $pgbench_pid &> /dev/null
@@ -56,6 +57,14 @@ fi
 csv_count=$(find "$OUT_DIR"/pg_results -name "*.csv" | wc -l)
 if [ "$csv_count" == "0" ]; then
   echo "Error! Invalid csv files count."
+  exit 1
+fi
+
+# get pid of process listening port 5432
+pid_5432=$( sudo ss -tlpn | grep 5432 | grep -o -P '(?<=pid\=).*(?=\,fd)' | head -n 1 )
+pid_5432_count=$(find "$OUT_DIR"/pg_results -name "*stacks_$pid_5432" | wc -l)
+if [ "$pid_5432_count" == "0" ]; then
+  echo "Error! Not stack file for port 5432."
   exit 1
 fi
 

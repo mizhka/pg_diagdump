@@ -14,14 +14,14 @@ pgbench -U postgres -d postgres --time=600 --client=1 &> /dev/null &
 pgbench_pid=$!
 
 # clean out dir
-OUT_DIR="/tmp/out"
+OUT_DIR="$SD/out"
+PG_DIAGDUMP="$SD/../pg_diagdump.sh"
 mkdir -p "$OUT_DIR"
-chmod 777 "$OUT_DIR"
 rm -rf "$OUT_DIR"/*
 
 # run pg_diagdump.sh
 exec 5>&1
-file_msg=$( sudo -u postgres "$SD/pg_diagdump.sh" -p 5432 -C "$OUT_DIR" -n state | tee >(cat - >&5) )
+file_msg=$( sudo "$PG_DIAGDUMP" -p 5432 -d "$OUT_DIR" stacks | tee >(cat - >&5) )
 
 # kill pgbench by pid
 kill $pgbench_pid &> /dev/null

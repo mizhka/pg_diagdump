@@ -1,5 +1,7 @@
 ---
 
+# /u02/data
+
 # init var per os
 # init test_dir
 - name: "Init vars"
@@ -11,6 +13,27 @@
       pg_diagdump-CentOS:
         - perf
         - gdb
+        - rsync
+
+- name: "edit pg_hba.conf"
+  become: true
+  lineinfile:
+    path: "/u02/data/pg_hba.conf"
+    line: "{{ item.line }}"
+    regexp: "{{ item.regexp }}"
+  with_items:
+    - regexp: "^host    all             all.*$"
+      line: "host    all             all             0.0.0.0/0               trust"
+    - regexp: "^local   all             all.*$"
+      line: "local    all             all            trust"
+  register: edit_pg_hba_result
+
+- name: restart postgres
+  become: true
+  service:
+    name: 'postgrespro-ent-13'
+    state: restarted
+  when: edit_pg_hba_result.changed
 
 # install peckages per os
 - name: Install dependecies for pg_diagdump.sh
@@ -37,7 +60,7 @@
 # copy files via rsync
 - name: "sync playbook dir: {{ playbook_dir }}"
   ansible.posix.synchronize:
-    src: "{{ playbook_dir }}"
+    src: "{{ playbook_dir }}/.."
     dest: "{{ test_dir }}"
     rsync_opts:
       - "--exclude=.git"
@@ -48,5 +71,5 @@
 - name: "do run_test_all.sh"
   ansible.builtin.shell:
     cmd: |
-      ./run_test_all.sh
-    chdir: "{{ test_dir }}/pg_diagdump"
+      ./tests/run_test_all.sh
+    chdir: "{{ test_dir }}"
