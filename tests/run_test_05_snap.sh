@@ -15,12 +15,13 @@ pgbench_pid=$!
 
 # clean out dir
 OUT_DIR="$SD/out"
+PG_DIAGDUMP="$SD/../pg_diagdump.sh"
 mkdir -p "$OUT_DIR"
 rm -rf "$OUT_DIR"/*
 
 # run pg_diagdump.sh
 exec 5>&1
-file_msg=$( sudo "$SD/pg_diagdump.sh" -p 5432 -C "$OUT_DIR" stacks | tee >(cat - >&5) )
+file_msg=$( sudo "$PG_DIAGDUMP" -p 5432 -d "$OUT_DIR" snap | tee >(cat - >&5) )
 
 # kill pgbench by pid
 kill $pgbench_pid &> /dev/null
@@ -36,11 +37,16 @@ fi
 mkdir -p "$OUT_DIR/pg_results"
 tar -xzf "$file" -C "$OUT_DIR/pg_results"
 
-# search for
-# exe = '/opt/pgpro/ent-11/bin/postgres'
-thread_count=$(grep 'exe =' "$OUT_DIR"/pg_results/diag_*.stacks* | grep postgres | wc -l)
-if [ "$thread_count" == "0" ]; then
-  echo "Error! Invalid stacks file."
+# count csv file
+csv_count=$(find "$OUT_DIR"/pg_results -name "*.csv" | wc -l)
+if [ "$csv_count" == "0" ]; then
+  echo "Error! Invalid csv files count."
+  exit 1
+fi
+
+select_count=$(grep -c select "$OUT_DIR"/pg_results/*)
+if [ "$select_count" == "0" ]; then
+  echo "Error! No one select found."
   exit 1
 fi
 

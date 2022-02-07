@@ -1,0 +1,160 @@
+---
+
+# /u02/data
+
+################################################################################
+# second instance
+
+- name: define empty vars
+  set_fact:
+    dbdata2: "/u02/data_2"
+    dbuser: postgres
+    dbinit: '/opt/pgpro/ent-13/bin/initdb -D '
+    pgctl: '/opt/pgpro/ent-13/bin/pg_ctl'
+
+- name: create data directory
+  become: true
+  file:
+     path: "{{ dbdata2 }}"
+     state: directory
+     owner: "{{ dbuser }}"
+     group: "{{ dbuser }}"
+     mode: 0700
+
+- name: Check that dbdata2 is not inited
+  become: true
+  stat:
+    path: "{{ dbdata2 }}/pg_hba.conf"
+  register: dbdata2_stat_result
+
+- name: init dbdata2
+  become: true
+  become_user: '{{ dbuser }}'
+  shell:
+     cmd: '{{ dbinit }} {{ dbdata2 }}'
+  when: not dbdata2_stat_result.stat.exists
+
+- name: "edit pg_hba.conf for dbdata2"
+  become: true
+  lineinfile:
+    path: "{{ dbdata2 }}/pg_hba.conf"
+    line: "{{ item.line }}"
+    regexp: "{{ item.regexp }}"
+  with_items:
+    - regexp: "^host    all             all.*$"
+      line: "host    all             all             0.0.0.0/0               trust"
+    - regexp: "^local   all             all.*$"
+      line: "local    all             all            trust"
+
+- name: "edit pg_hba.conf for dbdata2"
+  become: true
+  lineinfile:
+    path: "{{ dbdata2 }}/postgresql.conf"
+    line: "{{ item.line }}"
+    regexp: "{{ item.regexp }}"
+  with_items:
+    - regexp: "^#port = 5432"
+      line: "port = 5433"
+
+# /opt/pgpro/ent-13/bin/pg_ctl -D /u02/data start
+- name: start postgres in dbdata2
+  become: true
+  become_user: '{{ dbuser }}'
+  shell:
+     cmd: '{{ pgctl }} -D {{ dbdata2 }} start'
+
+################################################################################
+# first instance
+
+# init var per os
+# init test_dir
+- name: "Init vars"
+  set_fact:
+    test_dir: ~/pg_diagdump_test
+    distkey: '{{ ''pg_diagdump-'' ~ ansible_distribution }}'
+    distribs:
+      #  pg_diagdump-Debian:
+      pg_diagdump-CentOS:
+        - perf
+        - gdb
+        - rsync
+
+- name: "edit pg_hba.conf"
+  become: true
+  lineinfile:
+    path: "/u02/data/pg_hba.conf"
+    line: "{{ item.line }}"
+    regexp: "{{ item.regexp }}"
+  with_items:
+    - regexp: "^host    all             all.*$"
+      line: "host    all             all             0.0.0.0/0               trust"
+    - regexp: "^local   all             all.*$"
+      line: "local    all             all            trust"
+  register: edit_pg_hba_result
+
+- name: restart postgres
+  become: true
+  service:
+    name: 'postgrespro-ent-13'
+    state: restarted
+  when: edit_pg_hba_result.changed
+
+# install peckages per os
+- name: Install dependecies for pg_diagdump.sh
+  become: yes
+  package:
+    name: '{{ item }}'
+    state: present
+  with_items: "{{ distribs[distkey] }}"
+
+# access rights for user postgres in dir ~
+- name: "Change right to the home dir"
+  ansible.builtin.file:
+    path: "~"
+    state: directory
+    mode: '0755'
+
+# create test_dir
+- name: Create a directory if it does not exist
+  ansible.builtin.file:
+    path: "{{ test_dir }}"
+    state: directory
+    mode: '0755'
+
+# copy files via rsync
+- name: "sync playbook dir: {{ playbook_dir }}"
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/.."
+    dest: "{{ test_dir }}"
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=logs"
+      - "--exclude=out"
+
+# tun tests
+- name: "do run_test_double_instance.sh"
+  ansible.builtin.shell:
+    cmd: |
+      ./tests/run_test_double_instance.sh
+    chdir: "{{ test_dir }}"
+
+################################################################################
+# stop 2 instances and run test
+
+- name: stop postgres in dbdata2
+  become: true
+  become_user: '{{ dbuser }}'
+  shell:
+     cmd: '{{ pgctl }} -D {{ dbdata2 }} stop'
+
+- name: stop postgres in /u02/data
+  become: true
+  become_user: '{{ dbuser }}'
+  shell:
+     cmd: '{{ pgctl }} -D /u02/data stop'
+
+- name: "do run_test_07_postgres_not_started.sh"
+  ansible.builtin.shell:
+    cmd: |
+      ./tests/run_test_07_postgres_not_started.sh
+    chdir: "{{ test_dir }}"

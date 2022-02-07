@@ -36,6 +36,9 @@ DESTDIR=`pwd`
 MARKER="autovacuum\ launcher"
 
 TERM_USER="${USER}"
+UNAMESTR=""
+ID=""
+SYSCPU=8
 
 _masters=()
 _listenport=1
@@ -76,26 +79,36 @@ function root_it {
 }
 
 function os_specific_steps {
-    local unamestr
+    UNAMESTR=`uname`
 
-    unamestr=`uname`
-    # Normal way
-    if [ "$unamestr" = "FreeBSD" ]; then
-        SYSCPU=`sysctl -n hw.ncpu`
-        WITHOUT_PERF="yes"
-        PKGMG="pkg install"
-    elif [ "$unamestr" = "Linux" ]; then
-        distname=`awk '/^ID=/' /etc/*-release | awk -F'=' '{ print tolower($2) }'_`
-        SYSCPU=`nproc`
-        if [ "$distname" = "altlinux" ]; then
-            PKGMG="apt-get install"
-        else
-            PKGMG="yum install"
-        fi
-    else
-        SYSCPU=`nproc`
-        PKGMG="yum install"
+    if [ -e /etc/os-release ]; then
+      # init ID here
+      . /etc/os-release
     fi
+
+    if [ "$UNAMESTR" == "FreeBSD" ]; then
+      SYSCPU=`sysctl -n hw.ncpu`
+      WITHOUT_PERF="yes"
+      PKGMG="pkg install"
+      return
+    fi
+
+    # Linux
+    SYSCPU=`nproc`
+    case "$ID" in
+      debian|ubuntu|astra|osnova|altlinux)
+        PKGMG="apt-get install"
+        ;;
+      rhel|centos|fedora)
+        PKGMG="yum install"
+        ;;
+      *sles*|*suse*)
+        PKGMG="zypper install"
+        ;;
+      *)
+        PKGMG="yum install"
+        ;;
+    esac
 }
 
 # Parse parameters
@@ -130,6 +143,7 @@ function do_getopts {
                 log_exit
             else
                 cd ${_target}
+                DESTDIR=`pwd`
             fi
             ;;
         j)  _parallel=$OPTARG
@@ -242,14 +256,14 @@ gzip_outtar() {
 
 get_postmaster_by_port () {
 
-    if [ "$unamestr" = "FreeBSD" ]; then
+    if [ "$UNAMESTR" = "FreeBSD" ]; then
         sockstat -4lq -p ${1} | cut -f3 -w
     elif (type netstat) >/dev/null 2>&1;
     then
         /bin/netstat -4tanlp 2>/dev/null | grep "${1}" | sed -e 's#.* \([0-9]\{1,\}\)\/.*#\1#g'
     elif (type ss) >/dev/null 2>&1;
     then
-        if [ "$distname" = "altlinux" ]; then
+        if [ "$ID" = "altlinux" ]; then
             ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*,\([0-9]\{1,\}\),.*#\1#"
         else
             ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
@@ -258,7 +272,7 @@ get_postmaster_by_port () {
 }
 
 get_pgdata_by_pid () {
-    if [ "$unamestr" = "FreeBSD" ]; then
+    if [ "$UNAMESTR" = "FreeBSD" ]; then
         procstat -he ${1} | sed -E 's/.*PGDATA=([^ ]+).*/\1/g'
     else
         /bin/readlink -e /proc/${1}/cwd
@@ -267,12 +281,12 @@ get_pgdata_by_pid () {
 }
 
 get_pgport_by_pid () {
-    if [ "$unamestr" = "FreeBSD" ]; then
+    if [ "$UNAMESTR" = "FreeBSD" ]; then
         sockstat | grep "${1}" | grep tcp4 | cut -f6 -w | cut -f2 -d:
     else
         if (type netstat) >/dev/null 2>&1;
             then
-                if [ "$distname" = "altlinux" ]; then
+                if [ "$ID" = "altlinux" ]; then
                     /bin/netstat -A inet -tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
                  else
                     /bin/netstat -4tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
@@ -285,7 +299,7 @@ get_pgport_by_pid () {
 }
 
 get_exe_by_pid () {
-    if [ "$unamestr" = "FreeBSD" ]; then
+    if [ "$UNAMESTR" = "FreeBSD" ]; then
         procstat -hb ${1} | cut -f4 -w
     else
         readlink /proc/${_master}/exe
@@ -848,7 +862,7 @@ check_installed_pkgs ()
         then
             if [ -z "${WITHOUT_PERF}" -a -z "${WITHOUT_PROFILING}" ];
             then
-                if [ "$distname" = "altlinux" ]; then
+                if [ "$ID" = "altlinux" ]; then
                     _missing+=('linux-tools-<YOUR KERNEL>')
                 else
                     _missing+=('perf')
