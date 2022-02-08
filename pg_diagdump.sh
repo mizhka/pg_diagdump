@@ -258,16 +258,14 @@ get_postmaster_by_port () {
 
     if [ "$UNAMESTR" = "FreeBSD" ]; then
         sockstat -4lq -p ${1} | cut -f3 -w
-    elif (type netstat) >/dev/null 2>&1;
-    then
-        /bin/netstat -4tanlp 2>/dev/null | grep "${1}" | sed -e 's#.* \([0-9]\{1,\}\)\/.*#\1#g'
-    elif (type ss) >/dev/null 2>&1;
-    then
+    elif (type ss) >/dev/null 2>&1; then
         if [ "$ID" = "altlinux" ]; then
             ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*,\([0-9]\{1,\}\),.*#\1#"
         else
             ss -4tanelp | grep "\:${1}[[:space:]].*post\(master\|gres\)" | sed "s#.*pid=\([0-9]\{1,\}\),.*#\1#"
         fi
+    elif (type netstat) >/dev/null 2>&1; then
+        /bin/netstat -4tanlp 2>/dev/null | grep "${1}" | sed -e 's#.* \([0-9]\{1,\}\)\/.*#\1#g'
     fi
 }
 
@@ -284,17 +282,15 @@ get_pgport_by_pid () {
     if [ "$UNAMESTR" = "FreeBSD" ]; then
         sockstat | grep "${1}" | grep tcp4 | cut -f6 -w | cut -f2 -d:
     else
-        if (type netstat) >/dev/null 2>&1;
-            then
-                if [ "$ID" = "altlinux" ]; then
-                    /bin/netstat -A inet -tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
-                 else
-                    /bin/netstat -4tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
-                 fi
-            elif (type ss) >/dev/null 2>&1;
-            then
-                ss -4tanlp | grep "pid=${1}," | cut -f2 -d: | cut -f1 -d " "
+        if (type ss) >/dev/null 2>&1; then
+            ss -4tanlp | grep "pid=${1}," | cut -f2 -d: | cut -f1 -d " "
+        elif (type netstat) >/dev/null 2>&1; then
+            if [ "$ID" = "altlinux" ]; then
+                /bin/netstat -A inet -tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+            else
+                /bin/netstat -4tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
             fi
+        fi
     fi
 }
 
