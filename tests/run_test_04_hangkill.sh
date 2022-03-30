@@ -35,7 +35,7 @@ fi
 
 # extract archive
 mkdir -p "$OUT_DIR/pg_results"
-tar -xzf "$file" -C "$OUT_DIR/pg_results"
+tar -xf "$file" -C "$OUT_DIR/pg_results"
 
 # search for
 # exe = '/opt/pgpro/ent-11/bin/postgres'

@@ -26,6 +26,7 @@
 # v1.3 - fix crash of postmaster
 # v1.4 - add pgpro_stats
 # v1.5 - hangling non-root & double-exec
+# v1.6 - add xz archiver usage with -x flag
 
 GZIP="gzip"
 
@@ -43,6 +44,8 @@ SYSCPU=8
 _masters=()
 _listenport=1
 _pgdata=""
+
+_xz=0
 
 ############# Begin of functions ###############
 
@@ -114,7 +117,7 @@ function os_specific_steps {
 # Parse parameters
 function do_getopts {
 
-    while getopts "h?D:d:j:p:nv" opt; do
+    while getopts "h?D:d:j:p:nvx" opt; do
         case "$opt" in
         h|\?)
             show_help
@@ -153,6 +156,9 @@ function do_getopts {
             fi
             ;;
         n)  _dont_use_root=1
+            ;;
+        x)
+            _xz=1
             ;;
         esac
     done
@@ -250,7 +256,7 @@ add_file_to_output() {
 }
 
 gzip_outtar() {
-    gzip ${OUTTAR}
+    $GZIP ${OUTTAR}
     chown ${TERM_USER}:${TERM_USER} ${OUTTGZ}
 }
 
@@ -550,6 +556,8 @@ COPY ( select * from pg_stat_user_indexes
 ) TO '/tmp/$OUTPUT.pg_snap_user_indexes.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_prepared_xacts
 ) TO '/tmp/$OUTPUT.pg_snap_prepared_xacts.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+COPY ( SELECT pg_current_wal_flush_lsn()
+) TO '/tmp/$OUTPUT.pg_snap_current_wal_flush_lsn.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_replication
 ) TO '/tmp/$OUTPUT.pg_snap_replication.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_replication_slots
@@ -645,6 +653,8 @@ ${_pgss_init}
 ${_pgpro_ss_init}
 COPY ( select * from pg_prepared_xacts
 ) TO '/tmp/$OUTPUT.pg_stat_prepared_xacts_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+COPY ( SELECT pg_current_wal_flush_lsn()
+) TO '/tmp/$OUTPUT.pg_stat_current_wal_flush_lsn_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_replication
 ) TO '/tmp/$OUTPUT.pg_stat_replication_init.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_replication_slots
@@ -666,6 +676,8 @@ ${_pgpro_ss_fini_3}
 ${_pgpro_ss_fini_4}
 COPY ( select * from pg_prepared_xacts
 ) TO '/tmp/$OUTPUT.pg_stat_prepared_xacts_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
+COPY ( SELECT pg_current_wal_flush_lsn()
+) TO '/tmp/$OUTPUT.pg_stat_current_wal_flush_lsn_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_stat_replication
 ) TO '/tmp/$OUTPUT.pg_stat_replication_end.csv' (format csv, delimiter ';', ENCODING 'UTF8',header TRUE, FORCE_QUOTE *);
 COPY ( select * from pg_replication_slots
@@ -687,7 +699,7 @@ pg_diagdump_summary ()
 {
     gzip_outtar
     echo ""
-    echo "Generated file: $(realpath ${OUTTAR}.gz)"
+    echo "Generated file: $(realpath ${OUTTGZ})"
 }
 
 show_help () {
@@ -703,6 +715,7 @@ Flags:
     -p LISTEN_PORT  listening port for PostgreSQL database
     -D PGDATA       path to PostgreSQL database data directory
     -n              execute under current non-root user (avoid usage of sudo)
+    -x              use xz archiver
 
 Available commands:
     hang            gather light core dump and profiling+stack info 
@@ -818,9 +831,45 @@ validate_cluster_params ()
     return 0
 }
 
+check_installed_archiver ()
+{
+  # .xz
+  if [ "$_xz" == "1" ]; then
+    if ! (type xz) >/dev/null 2>&1; then
+      _missing+=('xz')
+      return
+    fi
+
+    GZIP='xz'
+    OUTTGZ="${OUTPUT}".tar.xz
+    export XZ_OPT="-9 xz"
+
+    echo ""
+    echo "xz is specified as archiver."
+    echo ""
+
+    return
+  fi
+
+  # .gz
+  if ! (type pigz) >/dev/null 2>&1; then
+    if ! (type gzip) >/dev/null 2>&1; then
+      # if missing install better tool
+      _missing+=('pigz')
+    else
+      echo ""
+      echo "WARNING! pigz isn't installed, so I use gzip instead."
+      echo ""
+    fi
+  else
+    GZIP='pigz'
+  fi
+  OUTTGZ="${OUTPUT}".tar.gz
+}
+
 check_installed_pkgs ()
 {
-    local _missing _checkperf
+    local _checkperf
     case "$_cmd" in
         hang)
             _checkperf="yes"
@@ -837,20 +886,7 @@ check_installed_pkgs ()
     esac
 
     _missing=()
-    if ! (type pigz) >/dev/null 2>&1;
-    then
-        if ! (type gzip) >/dev/null 2>&1;
-        then
-            # if missing install better tool
-            _missing+=('pigz')
-        else
-            echo ""
-            echo "WARNING! pigz isn't installed, so I use gzip instead."
-            echo ""
-        fi
-    else
-        GZIP='pigz'
-    fi
+    check_installed_archiver
 
     if ! (type gdb) >/dev/null 2>&1;
     then

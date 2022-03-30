@@ -35,7 +35,7 @@ fi
 
 # extract archive
 mkdir -p "$OUT_DIR/pg_results"
-tar -xzf "$file" -C "$OUT_DIR/pg_results"
+tar -xf "$file" -C "$OUT_DIR/pg_results"
 
 # count csv file
 csv_count=$(find "$OUT_DIR"/pg_results -name "*.csv" | wc -l)
