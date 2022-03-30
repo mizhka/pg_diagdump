@@ -21,7 +21,7 @@ rm -rf "$OUT_DIR"/*
 
 # run pg_diagdump.sh
 exec 5>&1
-file_msg=$( sudo "$PG_DIAGDUMP" -p 5432 -d "$OUT_DIR" state | tee >(cat - >&5) )
+file_msg=$( sudo "$PG_DIAGDUMP" -x -p 5432 -d "$OUT_DIR" state | tee >(cat - >&5) )
 
 # kill pgbench by pid
 kill $pgbench_pid &> /dev/null
@@ -33,9 +33,9 @@ if [ ! -f "$file" ]; then
   exit 1
 fi
 
-comp_count=$(file "$file" | grep -c "gzip compressed data")
+comp_count=$(file "$file" | grep -c "XZ compressed data")
 if [ "$comp_count" == "0" ]; then
-  echo "Error! Archive is not gzip compressed."
+  echo "Error! Archive is not XZ."
   exit 1
 fi
 

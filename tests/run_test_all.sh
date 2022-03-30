@@ -10,6 +10,7 @@ tests=(
 "run_test_04_hangkill.sh"
 "run_test_05_snap.sh"
 "run_test_06_stacks.sh"
+"run_test_10_xz.sh"
 )
 
 RED='\033[0;31m'

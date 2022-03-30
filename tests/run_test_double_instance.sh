@@ -4,6 +4,7 @@
 SD="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 tests=(
+"run_test_08_multi_instance_error.sh"
 "run_test_09_port_5433.sh"
 "run_test_01_state.sh"
 )
