@@ -1,6 +1,6 @@
 ---
 #
-#- include_tasks: "tasks/pg_diagdump_test/main.yml"
+#- include_tasks: "tasks/pg_diagdump_test/stacks_11.yml"
 #
 - include_tasks: "tasks/pg_diagdump_test/main_0.yml"
 
@@ -8,5 +8,5 @@
 - name: "do run_test_all.sh"
   ansible.builtin.shell:
     cmd: |
-      ./tests/run_test_all.sh
+      ./tests/run_test_11_stacks_pgbench.sh
     chdir: "{{ test_dir }}"

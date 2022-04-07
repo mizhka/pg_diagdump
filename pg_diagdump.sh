@@ -27,6 +27,7 @@
 # v1.4 - add pgpro_stats
 # v1.5 - hangling non-root & double-exec
 # v1.6 - add xz archiver usage with -x flag
+# v1.7 - multiple fixes for Pg14 and more
 
 GZIP="gzip"
 
@@ -286,15 +287,15 @@ get_pgdata_by_pid () {
 
 get_pgport_by_pid () {
     if [ "$UNAMESTR" = "FreeBSD" ]; then
-        sockstat | grep "${1}" | grep tcp4 | cut -f6 -w | cut -f2 -d:
+        sockstat | grep "${1}" | grep tcp4 | head -1 | cut -f6 -w | cut -f2 -d:
     else
         if (type ss) >/dev/null 2>&1; then
-            ss -4tanlp | grep "pid=${1}," | cut -f2 -d: | cut -f1 -d " "
+            ss -4tanlp | grep "pid=${1}," | head -1 | cut -f2 -d: | cut -f1 -d " "
         elif (type netstat) >/dev/null 2>&1; then
             if [ "$ID" = "altlinux" ]; then
-                /bin/netstat -A inet -tanlp 2>/dev/null  | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+                /bin/netstat -A inet -tanlp 2>/dev/null  | grep "${1}" | head -1 | cut -f2 -d: | cut -f1 -d " "
             else
-                /bin/netstat -4tanlp 2>/dev/null  | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+                /bin/netstat -4tanlp 2>/dev/null  | grep "${1}" | head -1 | cut -f2 -d: | cut -f1 -d " "
             fi
         fi
     fi
@@ -318,12 +319,51 @@ pg_diagdump_gdbstacks ()
     done
 }
 
+get_pg_log_file ()
+{
+    local _master _pgdata _log_file
+
+    _master=$1
+    _pgdata=$(get_pgdata_by_pid ${_master})
+
+    if [[ -e "${_pgdata}/current_logfiles" ]]; then
+        _log_file=$(awk '{ print $2 }' "${_pgdata}/current_logfiles")
+
+        if [[ -f "${_pgdata}/${_log_file}" ]]; then
+            echo "${_pgdata}/${_log_file}"
+            return 0
+        fi
+
+        if [[ -f "${_log_file}" ]]; then
+            echo "${_log_file}"
+            return 0
+        fi
+    fi
+
+    echo /proc/${_master}/fd/1
+    return 0
+}
+
 pg_diadgump_gdbstacks_single ()
 {
-    local _master _bin _fileid
+    local _master _bin _fileid _version _version_major _pids _log_current
 
     _master=$1
     _bin=$(get_exe_by_pid ${_master})
+
+    _version=$("$_bin" --version | grep -Eo '[0-9]+\.[0-9]+')
+    _version_major=$(echo $_version | cut -d. -f1)
+
+    if [ $_version_major -ge 14 ]
+    then
+      mem_ctx_str='p MemoryContextStatsDetail(TopMemoryContext, 5000, 1)'
+      my_pg_xact_str=""
+    else
+      mem_ctx_str='p MemoryContextStatsDetail(TopMemoryContext, 5000)'
+      my_pg_xact_str='if MyPgXact != 0
+printf "MyPgXact->nxids = %d\n", MyPgXact->nxids
+end'
+    fi
 
     echo "Use ${PARALLEL} jobs for stack gathering"
     printf "Gathering stacks (${_master})... "
@@ -364,7 +404,7 @@ EOF
     else 
         prints=$"p num_held_lwlocks
         p held_lwlocks
-        p MemoryContextStatsDetail(TopMemoryContext, 5000)
+        $mem_ctx_str
         eval \"p *((LWLockHandle (*) [%u]) held_lwlocks)\", num_held_lwlocks
         "
     fi
@@ -381,9 +421,7 @@ thread apply all bt
 x/50xw \$sp
 x/10i \$rip
 ${prints}
-if MyPgXact != 0
-printf "MyPgXact->nxids = %d\n", MyPgXact->nxids
-end
+${my_pg_xact_str}
 detach
 echo \n\n
 EOF
@@ -396,11 +434,22 @@ EOF
         echo quit >> tmp$i.gdb
     done
 
+    _log_current=$(get_pg_log_file ${_master})
+    tail -f "${_log_current}" >> $OUTPUT.stderr_${_master} &
+    tail_pid=$!
+    sleep 1.0
+
+    _pids=()
     for i in `seq 1 ${PARALLEL}`
     do
         gdb -q -n --command=tmp$i.gdb >> tmp$i.out 2>&1 &
+        _pids+=( $! )
     done
-    wait
+    wait ${_pids[*]}
+
+    sleep 1.0
+    kill $tail_pid
+    wait $tail_pid 2>/dev/null
 
     for i in `seq 1 ${PARALLEL}`
     do
@@ -409,6 +458,7 @@ EOF
         rm tmp$i.gdb
     done
     add_file_to_output $OUTPUT.stacks_${_master}
+    add_file_to_output $OUTPUT.stderr_${_master}
 
     echo "Done!"
 }
@@ -832,7 +882,7 @@ check_installed_archiver ()
   # .xz
   if [ "$_xz" == "1" ]; then
     if ! (type xz) >/dev/null 2>&1; then
-      _missing+=('xz')
+      add_missing 'xz'
       return
     fi
 
@@ -851,7 +901,7 @@ check_installed_archiver ()
   if ! (type pigz) >/dev/null 2>&1; then
     if ! (type gzip) >/dev/null 2>&1; then
       # if missing install better tool
-      _missing+=('pigz')
+      add_missing 'pigz'
     else
       echo ""
       echo "WARNING! pigz isn't installed, so I use gzip instead."
@@ -861,6 +911,23 @@ check_installed_archiver ()
     GZIP='pigz'
   fi
   OUTTGZ="${OUTPUT}".tar.gz
+}
+
+add_missing ()
+{
+  case "$_cmd" in
+      snap)
+          case "$1" in
+              gdb)
+                  # don't need gdb in snap
+                  return 1
+                  ;;
+          esac
+          ;;
+  esac
+
+  _missing+=("$1")
+  return 0
 }
 
 check_installed_pkgs ()
@@ -886,7 +953,7 @@ check_installed_pkgs ()
 
     if ! (type gdb) >/dev/null 2>&1;
     then
-        _missing+=('gdb')
+        add_missing 'gdb'
     fi
 
     if [ "$_checkperf" = "yes" ]; then
@@ -895,9 +962,9 @@ check_installed_pkgs ()
             if [ -z "${WITHOUT_PERF}" -a -z "${WITHOUT_PROFILING}" ];
             then
                 if [ "$ID" = "altlinux" ]; then
-                    _missing+=('linux-tools-<YOUR KERNEL>')
+                    add_missing 'linux-tools-<YOUR KERNEL>'
                 else
-                    _missing+=('perf')
+                    add_missing 'perf'
                 fi
             else
                 WITHOUT_PROFILING=yes

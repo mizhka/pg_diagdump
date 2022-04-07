@@ -1,0 +1,17 @@
+---
+#
+#- include_tasks: "tasks/pg_diagdump_test/stacks_11.yml"
+#
+# don't install gdb
+- include_tasks: "tasks/pg_diagdump_test/main_0.yml"
+  vars:
+    distribs:
+      pg_diagdump-CentOS:
+        - rsync
+
+# check what pg_diagdump.sh snap is working
+- name: "do run_test_all.sh"
+  ansible.builtin.shell:
+    cmd: |
+      ./tests/run_test_05_snap.sh
+    chdir: "{{ test_dir }}"

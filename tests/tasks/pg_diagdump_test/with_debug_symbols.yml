@@ -1,0 +1,18 @@
+---
+#
+#- import_tasks: "tasks/pg_diagdump_test/with_debug_symbols.yml"
+#
+- import_tasks: "tasks/pg_diagdump_test/main_0.yml"
+
+- name: "install debug symbols"
+  become: true
+  shell: |
+    set -e
+    sudo debuginfo-install -y postgrespro-ent-13-server
+
+# tun tests
+- name: "do run_test_all.sh"
+  ansible.builtin.shell:
+    cmd: |
+      ./tests/run_test_13_stacks_with_symbols.sh
+    chdir: "{{ test_dir }}"

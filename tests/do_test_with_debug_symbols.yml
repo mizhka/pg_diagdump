@@ -1,0 +1,6 @@
+---
+- name: "Test pg_diagdump.sh"
+  hosts: '{{ test_hosts | default ("database0") }}'
+
+  tasks:
+    - include_tasks: "tasks/pg_diagdump_test/with_debug_symbols.yml"

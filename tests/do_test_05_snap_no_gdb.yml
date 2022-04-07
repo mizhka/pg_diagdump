@@ -1,0 +1,6 @@
+---
+- name: "Test pg_diagdump.sh 11 stacks"
+  hosts: '{{ test_hosts | default ("database0") }}'
+
+  tasks:
+    - include_tasks: "tasks/pg_diagdump_test/snap_05_no_gdb.yml"

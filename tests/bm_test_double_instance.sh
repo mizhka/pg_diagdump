@@ -14,13 +14,4 @@ export BM_SCALE=default
 export BM_DBENGINE=pgproee-13.4
 export BM_HOST=database0
 
-#bm init third
-bm image create
-bm env recreate
-
-# run tests
-bm ansible play -book ${PLAYBOOK}
-
-# Housekeeping
-bm env delete
-
+. "$SD/bm_common.sh"

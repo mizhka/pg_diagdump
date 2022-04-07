@@ -45,10 +45,8 @@ if [ "$thread_count" == "0" ]; then
   exit 1
 fi
 
-# debug symbols not installed
-# TopMemoryContext count must be 0
 memctx_count=$(grep TopMemoryContext "$OUT_DIR"/pg_results/diag_*.stderr* | wc -l)
-if [ "$memctx_count" != "0" ]; then
+if [ "$memctx_count" == "0" ]; then
   echo "Error! Invalid TopMemoryContext count."
   exit 1
 fi
