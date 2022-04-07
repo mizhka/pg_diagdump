@@ -9,7 +9,10 @@
     test_dir: ~/pg_diagdump_test
     distkey: '{{ ''pg_diagdump-'' ~ ansible_distribution }}'
     distribs:
-      #  pg_diagdump-Debian:
+      pg_diagdump-Debian:
+        - linux-perf
+        - gdb
+        - rsync
       pg_diagdump-CentOS:
         - perf
         - gdb

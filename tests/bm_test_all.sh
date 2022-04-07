@@ -1,28 +1,26 @@
-#!/bin/bash
-
-SD="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-
-TEST_NAME="t002"
-OS_NAME="centos-7.9"
-DB_NAME="pgproee-13.4"
-ENV_NAME="pgdd-${TEST_NAME}"
-PLAYBOOK="$SD/do_test.yml"
+#!/usr/bin/env bash
 
 set -e
 
-# Prepare steps
-bm cfg add -env ${ENV_NAME} \
-           -nodes 1 -backend pgproinfra \
-           -os ${OS_NAME} -dbengine ${DB_NAME} \
-           -scale default -schema single
+SD="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+PLAYBOOK="$SD/do_test.yml"
+TEST_NAME="t002"
+
+export BM_ENV="pgdd-${TEST_NAME}"
+export BM_NODES=1
+export BM_OS=centos-7.9
+export BM_SCHEMA=single
+export BM_SCALE=default
+export BM_DBENGINE=pgproee-13.4
+export BM_HOST=database0
+
 #bm init third
-bm env image -env ${ENV_NAME}
-bm env recreate -env ${ENV_NAME}
+bm image create
+bm env recreate
 
 # run tests
-bm env play -env ${ENV_NAME} -book ${PLAYBOOK}
+bm ansible play -book ${PLAYBOOK}
 
 # Housekeeping
-bm env delete -env ${ENV_NAME}
-bm cfg remove -env ${ENV_NAME}
+bm env delete
 

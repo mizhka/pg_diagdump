@@ -292,9 +292,9 @@ get_pgport_by_pid () {
             ss -4tanlp | grep "pid=${1}," | cut -f2 -d: | cut -f1 -d " "
         elif (type netstat) >/dev/null 2>&1; then
             if [ "$ID" = "altlinux" ]; then
-                /bin/netstat -A inet -tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+                /bin/netstat -A inet -tanlp 2>/dev/null  | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
             else
-                /bin/netstat -4tanlp | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
+                /bin/netstat -4tanlp 2>/dev/null  | grep "${1}" | cut -f2 -d: | cut -f1 -d " "
             fi
         fi
     fi

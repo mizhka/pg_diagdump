@@ -16,6 +16,11 @@
   hosts: database
   environment:
     PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/local/sbin"
+  vars:
+  - distkey: '{{ ''pg_diagdump-'' ~ ansible_distribution }}'
+  - perf_pkg:
+      pg_diagdump-Debian: linux-perf
+      pg_diagdump-CentOS: perf
   tasks:
     - name: check 
       command: echo $PATH
@@ -95,12 +100,14 @@
 
     - name: install perf
       become: yes
+      when: ansible_distribution != "Debian"
       ansible.builtin.package:
-         name: perf
+         name: "{{ perf_pkg[distkey ]}}"
          state: absent
 
     - name: check state without perf (non-application user, no pgss) 
       ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      when: ansible_distribution != "Debian"
       register: result
       failed_when: result.rc != 1
       loop:
@@ -109,22 +116,27 @@
     - name: install perf
       become: yes
       ansible.builtin.package:
-         name: perf
+         name: "{{ perf_pkg[distkey ]}}"
          state: present
       
     - name: by port (non-application user, no pgss) 
-      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      ansible.builtin.command:
+         cmd: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+         chdir: /tmp
       register: result
       failed_when:  result.rc != 0 or result.stderr != ''
       loop:
         - state
         
     - name: by port (postgres, no pgss) 
-      ansible.builtin.command: /tmp/pg_diagdump.sh -n -p 5432 {{ item }}
+      ansible.builtin.command: 
+         cmd: /tmp/pg_diagdump.sh -n -p 5432 {{ item }}
+         chdir: /tmp
       become: yes
       become_user: postgres
       register: result
-      failed_when:  result.rc != 0
+      failed_when:  result.rc != 0 or result.stderr != ''
+      
       loop: 
         - stacks
         - snap
@@ -132,7 +144,9 @@
         - procfs
         
     - name: by port (root, no pgss)
-      ansible.builtin.command: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+      ansible.builtin.command: 
+         cmd: /tmp/pg_diagdump.sh -p 5432 {{ item }}
+         chdir: /tmp
       become: yes
       become_user: root
       register: result
