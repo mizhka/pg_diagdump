@@ -20,6 +20,7 @@ export BM_SCHEMA=single
 export BM_SCALE=default
 export BM_DBENGINE=pgproee-13.4
 export BM_HOST=database0
+export BM_ENGINE=prometheus
 
 #bm init third
 bm image create

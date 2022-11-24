@@ -28,6 +28,7 @@
 # v1.5 - hangling non-root & double-exec
 # v1.6 - add xz archiver usage with -x flag
 # v1.7 - multiple fixes for Pg14 and more
+# v1.8 - remove gdb to avoid pgcrash
 
 GZIP="gzip"
 
@@ -309,16 +310,6 @@ get_exe_by_pid () {
     fi
 }
 
-pg_diagdump_gdbstacks ()
-{
-    local _master
-
-    for _master in ${_masters}
-    do
-        pg_diadgump_gdbstacks_single ${_master}
-    done
-}
-
 get_pg_log_file ()
 {
     local _master _pgdata _log_file
@@ -342,125 +333,6 @@ get_pg_log_file ()
 
     echo /proc/${_master}/fd/1
     return 0
-}
-
-pg_diadgump_gdbstacks_single ()
-{
-    local _master _bin _fileid _version _version_major _pids _log_current
-
-    _master=$1
-    _bin=$(get_exe_by_pid ${_master})
-
-    _version=$("$_bin" --version | grep -Eo '[0-9]+\.[0-9]+')
-    _version_major=$(echo $_version | cut -d. -f1)
-
-    if [ $_version_major -ge 14 ]
-    then
-      mem_ctx_str='p MemoryContextStatsDetail(TopMemoryContext, 5000, 1)'
-      my_pg_xact_str=""
-    else
-      mem_ctx_str='p MemoryContextStatsDetail(TopMemoryContext, 5000)'
-      my_pg_xact_str='if MyPgXact != 0
-printf "MyPgXact->nxids = %d\n", MyPgXact->nxids
-end'
-    fi
-
-    echo "Use ${PARALLEL} jobs for stack gathering"
-    printf "Gathering stacks (${_master})... "
-    if [[ ! -e ${_bin} ]];
-    then
-        echo "Can't find postgresql binary of " ${_master} ${_bin}
-        ps -g postgres -f
-    fi
-
-    cat - > tmp.gdb <<EOF
-set width 0
-set height 0
-set verbose off
-file ${_bin}
-EOF
-
-    for i in `seq 1 ${PARALLEL}`
-    do
-        cp tmp.gdb tmp$i.gdb
-    done
-    rm tmp.gdb
-
-    # it's enough to load postgres binary for debug symbols checking
-    cat - > tmp_check.gdb <<EOF
-set width 0
-set height 0
-set verbose off
-file ${_bin}
-p num_held_lwlocks
-p held_lwlocks
-EOF
-
-    out_check=$(gdb -batch -q  -n --command=tmp_check.gdb 2>&1 >/dev/null < /dev/null | grep Error)
-    rm tmp_check.gdb
-
-    if [ "$out_check" != "" ]; then
-        prints=""
-    else 
-        prints=$"p num_held_lwlocks
-        p held_lwlocks
-        $mem_ctx_str
-        eval \"p *((LWLockHandle (*) [%u]) held_lwlocks)\", num_held_lwlocks
-        "
-    fi
-
-    _fileid=1
-    for _backpid in $(pgrep -P ${_master})
-    do 
-        cat - >> tmp${_fileid}.gdb <<EOF
-attach ${_backpid}
-info proc
-info frame
-info registers
-thread apply all bt
-x/50xw \$sp
-x/10i \$rip
-${prints}
-${my_pg_xact_str}
-detach
-echo \n\n
-EOF
-        _fileid=$((_fileid % PARALLEL))
-        _fileid=$((++_fileid))
-    done
-
-    for i in `seq 1 ${PARALLEL}`
-    do
-        echo quit >> tmp$i.gdb
-    done
-
-    _log_current=$(get_pg_log_file ${_master})
-    tail -f "${_log_current}" >> $OUTPUT.stderr_${_master} &
-    tail_pid=$!
-    sleep 1.0
-
-    _pids=()
-    for i in `seq 1 ${PARALLEL}`
-    do
-        gdb -q -n --command=tmp$i.gdb >> tmp$i.out 2>&1 &
-        _pids+=( $! )
-    done
-    wait ${_pids[*]}
-
-    sleep 1.0
-    kill $tail_pid
-    wait $tail_pid 2>/dev/null
-
-    for i in `seq 1 ${PARALLEL}`
-    do
-        cat tmp$i.out >> $OUTPUT.stacks_${_master}
-        rm tmp$i.out
-        rm tmp$i.gdb
-    done
-    add_file_to_output $OUTPUT.stacks_${_master}
-    add_file_to_output $OUTPUT.stderr_${_master}
-
-    echo "Done!"
 }
 
 pg_diagdump_procfs ()
@@ -757,7 +629,6 @@ Usage:
 
 Flags:
     -d TARGET_DIR   path to directory where result files are stored to (default: current directory)
-    -j JOBS         amount of GDB process to gather stacks (default: amount of CPU coress)
     -p LISTEN_PORT  listening port for PostgreSQL database
     -D PGDATA       path to PostgreSQL database data directory
     -n              execute under current non-root user (avoid usage of sudo)
@@ -768,8 +639,7 @@ Available commands:
     hangkill        gather full core dump, profiling+stack info and terminate DB
     procfs          gather information about backends from procfs
     snap            gather database state information
-    stacks          gather stack info
-    state           gather profiling and stack info
+    state           gather profiling
 EOF
 }
 
@@ -915,17 +785,6 @@ check_installed_archiver ()
 
 add_missing ()
 {
-  case "$_cmd" in
-      snap)
-          case "$1" in
-              gdb)
-                  # don't need gdb in snap
-                  return 1
-                  ;;
-          esac
-          ;;
-  esac
-
   _missing+=("$1")
   return 0
 }
@@ -950,11 +809,6 @@ check_installed_pkgs ()
 
     _missing=()
     check_installed_archiver
-
-    if ! (type gdb) >/dev/null 2>&1;
-    then
-        add_missing 'gdb'
-    fi
 
     if [ "$_checkperf" = "yes" ]; then
         if ! (type perf) >/dev/null 2>&1;
@@ -1006,7 +860,6 @@ validate_cluster_params
     case "$_cmd" in
         hang)
             pg_diagdump_perf
-            pg_diagdump_gdbstacks
             pg_diagdump_gcore_running
             pg_diagdump_summary
             exit 0
@@ -1014,7 +867,6 @@ validate_cluster_params
         hangkill)
             ask_confirmation
             pg_diagdump_perf
-            pg_diagdump_gdbstacks
             pg_diagdump_linux_kerncore_running
             pg_diagdump_summary
             exit 0
@@ -1029,13 +881,7 @@ validate_cluster_params
             pg_diagdump_summary
             exit 0
             ;;
-        stacks)
-            pg_diagdump_gdbstacks
-            pg_diagdump_summary
-            exit 0
-            ;;
         state)
-            pg_diagdump_gdbstacks
             pg_diagdump_perf
             pg_diagdump_sqlstat
             pg_diagdump_summary
